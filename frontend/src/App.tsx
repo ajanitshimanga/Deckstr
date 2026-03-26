@@ -2,14 +2,26 @@ import { useEffect } from 'react'
 import { useAppStore } from './stores/appStore'
 import { UnlockScreen } from './components/UnlockScreen'
 import { AccountList } from './components/AccountList'
+import { UpdateModal } from './components/UpdateModal'
 import './style.css'
 
 function App() {
-  const { appState, initialize } = useAppStore()
+  const { appState, initialize, settings, checkForUpdates } = useAppStore()
 
   useEffect(() => {
     initialize()
   }, [])
+
+  // Check for updates when app is unlocked and autoCheckUpdates is enabled
+  useEffect(() => {
+    if (appState === 'unlocked' && settings?.autoCheckUpdates !== false) {
+      // Small delay to let the UI settle first
+      const timer = setTimeout(() => {
+        checkForUpdates()
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [appState, settings?.autoCheckUpdates])
 
   // Loading state
   if (appState === 'loading') {
@@ -29,7 +41,12 @@ function App() {
   }
 
   // Unlocked state
-  return <AccountList />
+  return (
+    <>
+      <AccountList />
+      <UpdateModal />
+    </>
+  )
 }
 
 export default App

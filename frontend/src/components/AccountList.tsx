@@ -19,6 +19,8 @@ import {
   Settings,
   Lock,
   HelpCircle,
+  Download,
+  Check,
   X
 } from 'lucide-react'
 import { cn } from '../lib/utils'
@@ -88,6 +90,9 @@ export function AccountList() {
     riotClientRunning,
     error,
     passwordHint,
+    settings,
+    appVersion,
+    isCheckingForUpdates,
     setSearchQuery,
     setSelectedNetwork,
     setSelectedTag,
@@ -99,6 +104,8 @@ export function AccountList() {
     loadAccounts,
     changePassword,
     updatePasswordHint,
+    updateSettings,
+    checkForUpdates,
     clearError,
   } = useAppStore()
 
@@ -250,7 +257,13 @@ export function AccountList() {
                   className="fixed inset-0 z-40"
                   onClick={() => setShowSettingsMenu(false)}
                 />
-                <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-lg z-50 overflow-hidden">
+                <div className="absolute right-0 top-full mt-1 w-56 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-lg z-50 overflow-hidden">
+                  {/* Version info */}
+                  {appVersion && (
+                    <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)] border-b border-[var(--color-border)]">
+                      Version {appVersion}
+                    </div>
+                  )}
                   <button
                     onClick={() => {
                       setShowPasswordChange(true)
@@ -270,6 +283,45 @@ export function AccountList() {
                   >
                     <HelpCircle className="w-4 h-4" />
                     Update Password Hint
+                  </button>
+                  <div className="border-t border-[var(--color-border)]" />
+                  {/* Auto-update toggle */}
+                  <button
+                    onClick={() => {
+                      if (settings) {
+                        updateSettings({ ...settings, autoCheckUpdates: !settings.autoCheckUpdates })
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50 flex items-center justify-between transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Download className="w-4 h-4" />
+                      Auto-check updates
+                    </span>
+                    <div className={cn(
+                      "w-8 h-4 rounded-full transition-colors relative",
+                      settings?.autoCheckUpdates !== false ? "bg-green-500" : "bg-zinc-600"
+                    )}>
+                      <div className={cn(
+                        "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
+                        settings?.autoCheckUpdates !== false ? "translate-x-4" : "translate-x-0.5"
+                      )} />
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      checkForUpdates()
+                      setShowSettingsMenu(false)
+                    }}
+                    disabled={isCheckingForUpdates}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50 flex items-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    {isCheckingForUpdates ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    {isCheckingForUpdates ? 'Checking...' : 'Check for Updates'}
                   </button>
                   <div className="border-t border-[var(--color-border)]" />
                   <button

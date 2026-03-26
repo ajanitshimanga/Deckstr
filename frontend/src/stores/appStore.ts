@@ -21,13 +21,18 @@ import {
   GetPasswordHint,
   ChangePassword,
   UpdatePasswordHint,
+  UpdateSettings,
   DetectSignedInAccount,
   MatchAndUpdateAccount,
   IsRiotClientRunning,
   SetWindowSizeLogin,
   SetWindowSizeMain,
+  GetAppVersion,
+  CheckForUpdates,
+  DownloadAndInstallUpdate,
+  OpenReleasePage,
 } from '../../wailsjs/go/main/App'
-import { riotclient } from '../../wailsjs/go/models'
+import { riotclient, updater } from '../../wailsjs/go/models'
 
 interface AppStore {
   // App state
@@ -60,6 +65,12 @@ interface AppStore {
   // Selected account for editing
   selectedAccountId: string | null
 
+  // Update state
+  appVersion: string
+  updateInfo: updater.UpdateInfo | null
+  isCheckingForUpdates: boolean
+  showUpdateModal: boolean
+
   // Actions
   initialize: () => Promise<void>
   createVault: (username: string, password: string, hint?: string) => Promise<boolean>
@@ -91,6 +102,13 @@ interface AppStore {
   startPolling: () => void
   stopPolling: () => void
 
+  // Update actions
+  checkForUpdates: () => Promise<void>
+  downloadAndInstallUpdate: () => Promise<void>
+  openReleasePage: () => Promise<void>
+  dismissUpdateModal: () => void
+  updateSettings: (settings: models.Settings) => Promise<boolean>
+
   // Computed
   filteredAccounts: () => models.Account[]
 }
@@ -115,6 +133,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   selectedNetworkId: null,
   selectedTag: null,
   selectedAccountId: null,
+  appVersion: '',
+  updateInfo: null,
+  isCheckingForUpdates: false,
+  showUpdateModal: false,
 
   // Initialize app - check vault state
   initialize: async () => {
@@ -432,6 +454,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (intervalId) {
       clearInterval(intervalId)
       ;(window as any).__pollingIntervalId = null
+    }
+  },
+
+  // Update actions
+  checkForUpdates: async () => {
+    set({ isCheckingForUpdates: true })
+    try {
+      const version = await GetAppVersion()
+      set({ appVersion: version })
+
+      const info = await CheckForUpdates()
+      if (info && info.available) {
+        set({ updateInfo: info, showUpdateModal: true })
+      } else {
+        set({ updateInfo: info })
+      }
+    } catch (e) {
+      console.error('Failed to check for updates:', e)
+    } finally {
+      set({ isCheckingForUpdates: false })
+    }
+  },
+
+  downloadAndInstallUpdate: async () => {
+    const { updateInfo } = get()
+    if (!updateInfo?.downloadURL) return
+
+    try {
+      await DownloadAndInstallUpdate(updateInfo.downloadURL)
+      // App will exit and installer will run
+    } catch (e) {
+      set({ error: `Update failed: ${e}` })
+    }
+  },
+
+  openReleasePage: async () => {
+    const { updateInfo } = get()
+    if (!updateInfo?.releaseURL) return
+
+    try {
+      await OpenReleasePage(updateInfo.releaseURL)
+    } catch (e) {
+      console.error('Failed to open release page:', e)
+    }
+  },
+
+  dismissUpdateModal: () => {
+    set({ showUpdateModal: false })
+  },
+
+  updateSettings: async (settings: models.Settings) => {
+    try {
+      await UpdateSettings(settings)
+      set({ settings, error: null })
+      return true
+    } catch (e) {
+      set({ error: String(e) })
+      return false
     }
   },
 

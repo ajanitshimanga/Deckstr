@@ -122,10 +122,11 @@ type VaultData struct {
 
 // Settings represents user preferences
 type Settings struct {
-	AutoLockTimeout int  `json:"autoLockTimeout"` // Minutes, 0 = disabled
-	StartWithSystem bool `json:"startWithSystem"`
-	MinimizeToTray  bool `json:"minimizeToTray"`
-	DarkMode        bool `json:"darkMode"`
+	AutoLockTimeout  int  `json:"autoLockTimeout"` // Minutes, 0 = disabled
+	StartWithSystem  bool `json:"startWithSystem"`
+	MinimizeToTray   bool `json:"minimizeToTray"`
+	DarkMode         bool `json:"darkMode"`
+	AutoCheckUpdates bool `json:"autoCheckUpdates"` // Check for updates on startup (default: true)
 
 	// BYOK: User's own Riot API key (stored encrypted in vault)
 	RiotAPIKey string `json:"riotApiKey,omitempty"`
@@ -170,10 +171,11 @@ func DefaultGameNetworks() []GameNetwork {
 // DefaultSettings returns default user settings
 func DefaultSettings() Settings {
 	return Settings{
-		AutoLockTimeout: 5,
-		StartWithSystem: false,
-		MinimizeToTray:  true,
-		DarkMode:        true,
+		AutoLockTimeout:  5,
+		StartWithSystem:  false,
+		MinimizeToTray:   true,
+		DarkMode:         true,
+		AutoCheckUpdates: true, // Check for updates on startup by default
 	}
 }
 
