@@ -2,9 +2,14 @@
 build/bin/
 build/installer/*.exe
 
-# Frontend dependencies
+# Dependencies
+node_modules/
 frontend/node_modules/
 frontend/dist/
+package-lock.json
+
+# Claude Code
+.claude/
 
 # Wails generated files
 frontend/wailsjs/
@@ -31,6 +36,7 @@ coverage.txt
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Logs
 *.log

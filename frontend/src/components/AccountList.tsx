@@ -15,7 +15,11 @@ import {
   Zap,
   ArrowUpDown,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Settings,
+  Lock,
+  HelpCircle,
+  X
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { models } from '../../wailsjs/go/models'
@@ -82,6 +86,8 @@ export function AccountList() {
     detectedAccount,
     activeAccountId,
     riotClientRunning,
+    error,
+    passwordHint,
     setSearchQuery,
     setSelectedNetwork,
     setSelectedTag,
@@ -91,6 +97,9 @@ export function AccountList() {
     detectAndUpdateRanks,
     editAccount,
     loadAccounts,
+    changePassword,
+    updatePasswordHint,
+    clearError,
   } = useAppStore()
 
   const unfilteredAccounts = filteredAccounts()
@@ -102,6 +111,9 @@ export function AccountList() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [selectedGame, setSelectedGame] = useState<string | null>(null)
   const [showLinkModal, setShowLinkModal] = useState(false)
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false)
+  const [showPasswordChange, setShowPasswordChange] = useState(false)
+  const [showHintUpdate, setShowHintUpdate] = useState(false)
 
   // Filter by game then sort accounts
   const accounts = useMemo(() => {
@@ -224,13 +236,56 @@ export function AccountList() {
             )}
             <span className="hidden xs:inline">{isDetecting ? 'Detecting' : 'Detect'}</span>
           </button>
-          <button
-            onClick={lock}
-            className="p-1.5 sm:p-2 rounded-md text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors duration-150"
-            title="Sign Out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+              className="p-1.5 sm:p-2 rounded-md text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors duration-150"
+              title="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            {showSettingsMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowSettingsMenu(false)}
+                />
+                <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-lg z-50 overflow-hidden">
+                  <button
+                    onClick={() => {
+                      setShowPasswordChange(true)
+                      setShowSettingsMenu(false)
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50 flex items-center gap-2 transition-colors"
+                  >
+                    <Lock className="w-4 h-4" />
+                    Change Password
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowHintUpdate(true)
+                      setShowSettingsMenu(false)
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50 flex items-center gap-2 transition-colors"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                    Update Password Hint
+                  </button>
+                  <div className="border-t border-[var(--color-border)]" />
+                  <button
+                    onClick={() => {
+                      lock()
+                      setShowSettingsMenu(false)
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -646,6 +701,16 @@ export function AccountList() {
           onClose={() => setShowLinkModal(false)}
         />
       )}
+
+      {/* Password Change Modal */}
+      {showPasswordChange && (
+        <PasswordChangeModal onClose={() => setShowPasswordChange(false)} />
+      )}
+
+      {/* Password Hint Update Modal */}
+      {showHintUpdate && (
+        <HintUpdateModal onClose={() => setShowHintUpdate(false)} />
+      )}
     </div>
   )
 }
@@ -861,6 +926,305 @@ function LinkAccountModal({
             {linking ? 'Linking...' : 'Link Account'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// Password Hint Update Modal Component
+function HintUpdateModal({ onClose }: { onClose: () => void }) {
+  const { updatePasswordHint, passwordHint, clearError, error } = useAppStore()
+  const [hint, setHint] = useState(passwordHint || '')
+  const [loading, setLoading] = useState(false)
+  const [success, setSuccess] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    clearError()
+    setLoading(true)
+    const result = await updatePasswordHint(hint)
+    setLoading(false)
+
+    if (result) {
+      setSuccess(true)
+      setTimeout(() => {
+        onClose()
+      }, 1500)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
+      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl">
+        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] flex items-center justify-between">
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+              Update Password Hint
+            </h2>
+            <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-0.5">
+              {passwordHint ? 'Change your password hint' : 'Add a hint to help remember your password'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {success ? (
+          <div className="p-6 sm:p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
+              Hint Updated!
+            </h3>
+            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+              {hint ? 'Your password hint has been saved' : 'Password hint has been removed'}
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4">
+            <div className="space-y-1.5 sm:space-y-2">
+              <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                Password Hint
+              </label>
+              <div className="relative">
+                <HelpCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
+                <input
+                  type="text"
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                  placeholder="e.g., My favorite pet's name"
+                  className={cn(
+                    'w-full pl-10 pr-4 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                  autoFocus
+                />
+              </div>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                This hint will be shown on the login screen. Leave empty to remove the hint.
+              </p>
+            </div>
+
+            {error && (
+              <div className="p-3 rounded-lg bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/20">
+                <p className="text-xs sm:text-sm text-[var(--color-destructive)]">{error}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2 sm:gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className={cn(
+                  'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
+                  'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
+                  'disabled:opacity-50 disabled:cursor-not-allowed'
+                )}
+              >
+                {loading ? 'Saving...' : (hint ? 'Save Hint' : 'Remove Hint')}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Password Change Modal Component
+function PasswordChangeModal({ onClose }: { onClose: () => void }) {
+  const { changePassword, clearError, error } = useAppStore()
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPasswords, setShowPasswords] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [success, setSuccess] = useState(false)
+
+  const passwordsMatch = newPassword === confirmPassword
+  const isValid = currentPassword.length >= 6 && newPassword.length >= 6 && passwordsMatch
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!isValid) return
+
+    clearError()
+    setLoading(true)
+    const result = await changePassword(currentPassword, newPassword)
+    setLoading(false)
+
+    if (result) {
+      setSuccess(true)
+      setTimeout(() => {
+        onClose()
+      }, 1500)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
+      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl">
+        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] flex items-center justify-between">
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+              Change Password
+            </h2>
+            <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-0.5">
+              Enter your current password to set a new one
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {success ? (
+          <div className="p-6 sm:p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
+              <svg className="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
+              Password Changed!
+            </h3>
+            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+              Your password has been updated successfully
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4">
+            <div className="space-y-1.5 sm:space-y-2">
+              <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                Current Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className={cn(
+                    'w-full pl-10 pr-10 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords(!showPasswords)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                >
+                  {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 sm:space-y-2">
+              <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                New Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className={cn(
+                    'w-full pl-10 pr-4 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                />
+              </div>
+              {newPassword.length > 0 && newPassword.length < 6 && (
+                <p className="text-xs text-[var(--color-warning)]">
+                  Password must be at least 6 characters
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5 sm:space-y-2">
+              <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                Confirm New Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  className={cn(
+                    'w-full pl-10 pr-4 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border',
+                    newPassword && confirmPassword && !passwordsMatch
+                      ? 'border-[var(--color-destructive)]'
+                      : 'border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                />
+              </div>
+              {newPassword && confirmPassword && !passwordsMatch && (
+                <p className="text-xs text-[var(--color-destructive)]">
+                  Passwords do not match
+                </p>
+              )}
+            </div>
+
+            {error && (
+              <div className="p-3 rounded-lg bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/20">
+                <p className="text-xs sm:text-sm text-[var(--color-destructive)]">{error}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2 sm:gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!isValid || loading}
+                className={cn(
+                  'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
+                  'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
+                  'disabled:opacity-50 disabled:cursor-not-allowed'
+                )}
+              >
+                {loading ? 'Changing...' : 'Change Password'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   )

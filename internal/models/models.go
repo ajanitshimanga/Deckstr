@@ -104,6 +104,7 @@ func splitRiotID(riotID string) []string {
 type Vault struct {
 	Version       int       `json:"version"`
 	Username      string    `json:"username"`      // Account username (for future cloud auth)
+	PasswordHint  string    `json:"passwordHint"`  // Optional hint displayed on lock screen (not encrypted)
 	Salt          string    `json:"salt"`          // Base64 encoded salt for key derivation
 	Nonce         string    `json:"nonce"`         // Base64 encoded nonce for encryption
 	EncryptedData string    `json:"encryptedData"` // Base64 encoded encrypted JSON

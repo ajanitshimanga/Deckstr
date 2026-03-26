@@ -467,3 +467,488 @@ func TestCannotCreateDuplicateVault(t *testing.T) {
 		t.Errorf("CreateVault() error = %v, want ErrVaultExists", err)
 	}
 }
+
+// ============================================================================
+// Password Hint Tests
+// ============================================================================
+
+func TestCreateVaultWithHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	username := "testuser"
+	password := "testpassword123"
+	hint := "My favorite pet's name"
+
+	// Create vault with hint
+	err = service.CreateVaultWithHint(username, password, hint)
+	if err != nil {
+		t.Fatalf("CreateVaultWithHint() error = %v", err)
+	}
+
+	// Vault should be created and unlocked
+	if !service.VaultExists() {
+		t.Error("VaultExists() should be true after creation")
+	}
+	if !service.IsUnlocked() {
+		t.Error("IsUnlocked() should be true after creation")
+	}
+}
+
+func TestGetPasswordHintWithoutUnlocking(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	username := "testuser"
+	password := "testpassword123"
+	expectedHint := "My favorite color"
+
+	// Create vault with hint
+	service.CreateVaultWithHint(username, password, expectedHint)
+	service.Lock()
+
+	// Should be able to get hint without unlocking
+	hint, err := service.GetPasswordHint()
+	if err != nil {
+		t.Fatalf("GetPasswordHint() error = %v", err)
+	}
+
+	if hint != expectedHint {
+		t.Errorf("GetPasswordHint() = %v, want %v", hint, expectedHint)
+	}
+}
+
+func TestPasswordHintStoredInVaultFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	hint := "The street I grew up on"
+	service.CreateVaultWithHint("user", "password", hint)
+
+	// Read raw vault file
+	rawData, err := os.ReadFile(vaultPath)
+	if err != nil {
+		t.Fatalf("Failed to read vault file: %v", err)
+	}
+
+	// Hint should be visible in the vault file (it's intentionally not encrypted)
+	if !strings.Contains(string(rawData), hint) {
+		t.Error("Password hint should be stored in vault file (unencrypted for display on lock screen)")
+	}
+
+	// Parse the vault to verify structure
+	var vault models.Vault
+	if err := json.Unmarshal(rawData, &vault); err != nil {
+		t.Fatalf("Failed to parse vault: %v", err)
+	}
+
+	if vault.PasswordHint != hint {
+		t.Errorf("Vault.PasswordHint = %v, want %v", vault.PasswordHint, hint)
+	}
+}
+
+func TestCreateVaultWithEmptyHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	// Create vault with empty hint
+	err = service.CreateVaultWithHint("user", "password", "")
+	if err != nil {
+		t.Fatalf("CreateVaultWithHint() with empty hint should succeed, error = %v", err)
+	}
+
+	service.Lock()
+
+	hint, err := service.GetPasswordHint()
+	if err != nil {
+		t.Fatalf("GetPasswordHint() error = %v", err)
+	}
+
+	if hint != "" {
+		t.Errorf("GetPasswordHint() = %v, want empty string", hint)
+	}
+}
+
+func TestGetPasswordHintWhenNoVault(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	// No vault exists
+	_, err = service.GetPasswordHint()
+	if err == nil {
+		t.Error("GetPasswordHint() should fail when no vault exists")
+	}
+	if err != ErrVaultNotFound {
+		t.Errorf("GetPasswordHint() error = %v, want ErrVaultNotFound", err)
+	}
+}
+
+// ============================================================================
+// Password Change Tests
+// ============================================================================
+
+func TestChangePassword(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	username := "testuser"
+	oldPassword := "oldpassword123"
+	newPassword := "newpassword456"
+
+	// Create vault and add some data
+	service.CreateVault(username, oldPassword)
+	data, _ := service.GetVaultData()
+	data.Accounts = append(data.Accounts, models.Account{
+		ID:       "acc1",
+		Username: "myaccount",
+		Password: "mypassword",
+	})
+	service.UpdateVaultData(data)
+	service.Save()
+
+	// Change password
+	err = service.ChangePassword(oldPassword, newPassword)
+	if err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+
+	// Should still be unlocked after password change
+	if !service.IsUnlocked() {
+		t.Error("IsUnlocked() should be true after password change")
+	}
+
+	// Lock and try to unlock with new password
+	service.Lock()
+	err = service.Unlock(username, newPassword)
+	if err != nil {
+		t.Fatalf("Unlock() with new password error = %v", err)
+	}
+
+	// Data should be preserved
+	data, _ = service.GetVaultData()
+	if len(data.Accounts) != 1 {
+		t.Fatalf("Expected 1 account, got %d", len(data.Accounts))
+	}
+	if data.Accounts[0].Username != "myaccount" {
+		t.Errorf("Account username = %v, want myaccount", data.Accounts[0].Username)
+	}
+}
+
+func TestChangePasswordFailsWithWrongCurrentPassword(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	correctPassword := "correctpassword"
+	wrongPassword := "wrongpassword"
+	newPassword := "newpassword"
+
+	service.CreateVault("user", correctPassword)
+
+	// Try to change password with wrong current password
+	err = service.ChangePassword(wrongPassword, newPassword)
+	if err == nil {
+		t.Error("ChangePassword() with wrong current password should fail")
+	}
+	if err != ErrInvalidPassword {
+		t.Errorf("ChangePassword() error = %v, want ErrInvalidPassword", err)
+	}
+
+	// Original password should still work
+	service.Lock()
+	err = service.Unlock("user", correctPassword)
+	if err != nil {
+		t.Errorf("Original password should still work after failed change, error = %v", err)
+	}
+}
+
+func TestChangePasswordFailsWhenLocked(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	password := "password123"
+	service.CreateVault("user", password)
+	service.Lock()
+
+	// Try to change password when locked
+	err = service.ChangePassword(password, "newpassword")
+	if err == nil {
+		t.Error("ChangePassword() when locked should fail")
+	}
+	if err != ErrVaultLocked {
+		t.Errorf("ChangePassword() error = %v, want ErrVaultLocked", err)
+	}
+}
+
+func TestCannotUnlockWithOldPasswordAfterChange(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	username := "testuser"
+	oldPassword := "oldpassword"
+	newPassword := "newpassword"
+
+	service.CreateVault(username, oldPassword)
+	service.ChangePassword(oldPassword, newPassword)
+	service.Lock()
+
+	// Old password should NOT work
+	err = service.Unlock(username, oldPassword)
+	if err == nil {
+		t.Error("Unlock() with old password should fail after password change")
+	}
+	if err != ErrInvalidPassword {
+		t.Errorf("Unlock() error = %v, want ErrInvalidPassword", err)
+	}
+}
+
+func TestChangePasswordGeneratesNewSalt(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	service.CreateVault("user", "oldpass")
+
+	// Read original vault
+	originalRaw, _ := os.ReadFile(vaultPath)
+	var originalVault models.Vault
+	json.Unmarshal(originalRaw, &originalVault)
+
+	// Change password
+	service.ChangePassword("oldpass", "newpass")
+
+	// Read new vault
+	newRaw, _ := os.ReadFile(vaultPath)
+	var newVault models.Vault
+	json.Unmarshal(newRaw, &newVault)
+
+	// Salt should be different (new key derivation)
+	if originalVault.Salt == newVault.Salt {
+		t.Error("Salt should change when password is changed")
+	}
+
+	// Nonce should be different
+	if originalVault.Nonce == newVault.Nonce {
+		t.Error("Nonce should change when password is changed")
+	}
+
+	// Encrypted data should be different
+	if originalVault.EncryptedData == newVault.EncryptedData {
+		t.Error("EncryptedData should change when password is changed")
+	}
+}
+
+func TestChangePasswordPreservesHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	hint := "My first car"
+	service.CreateVaultWithHint("user", "oldpass", hint)
+	service.ChangePassword("oldpass", "newpass")
+
+	// Hint should still be accessible
+	retrievedHint, err := service.GetPasswordHint()
+	if err != nil {
+		t.Fatalf("GetPasswordHint() error = %v", err)
+	}
+	if retrievedHint != hint {
+		t.Errorf("Hint = %v, want %v (should be preserved after password change)", retrievedHint, hint)
+	}
+}
+
+// ============================================================================
+// Update Password Hint Tests (for legacy users)
+// ============================================================================
+
+func TestUpdatePasswordHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	// Create vault WITHOUT hint (simulating legacy user)
+	service.CreateVault("user", "password")
+
+	// Verify no hint initially
+	hint, _ := service.GetPasswordHint()
+	if hint != "" {
+		t.Errorf("Initial hint should be empty, got %v", hint)
+	}
+
+	// Update hint
+	newHint := "My childhood nickname"
+	err = service.UpdatePasswordHint(newHint)
+	if err != nil {
+		t.Fatalf("UpdatePasswordHint() error = %v", err)
+	}
+
+	// Verify hint is updated
+	hint, err = service.GetPasswordHint()
+	if err != nil {
+		t.Fatalf("GetPasswordHint() error = %v", err)
+	}
+	if hint != newHint {
+		t.Errorf("Hint = %v, want %v", hint, newHint)
+	}
+}
+
+func TestUpdatePasswordHintFailsWhenLocked(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	service.CreateVault("user", "password")
+	service.Lock()
+
+	// Should fail when locked
+	err = service.UpdatePasswordHint("new hint")
+	if err == nil {
+		t.Error("UpdatePasswordHint() when locked should fail")
+	}
+	if err != ErrVaultLocked {
+		t.Errorf("UpdatePasswordHint() error = %v, want ErrVaultLocked", err)
+	}
+}
+
+func TestUpdatePasswordHintPersistsAcrossRestart(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+
+	// First session - create vault and update hint
+	service1, _ := NewStorageService()
+	service1.vaultPath = vaultPath
+	service1.CreateVault("user", "password")
+	service1.UpdatePasswordHint("Remember this!")
+	service1.Lock()
+
+	// Second session - simulate app restart
+	service2, _ := NewStorageService()
+	service2.vaultPath = vaultPath
+
+	// Hint should be readable without unlocking
+	hint, err := service2.GetPasswordHint()
+	if err != nil {
+		t.Fatalf("GetPasswordHint() error = %v", err)
+	}
+	if hint != "Remember this!" {
+		t.Errorf("Hint = %v, want 'Remember this!'", hint)
+	}
+}
+
+func TestClearPasswordHint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "osm-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test-vault.osm")
+	service, _ := NewStorageService()
+	service.vaultPath = vaultPath
+
+	// Create with hint
+	service.CreateVaultWithHint("user", "password", "Original hint")
+
+	// Clear hint by setting to empty
+	err = service.UpdatePasswordHint("")
+	if err != nil {
+		t.Fatalf("UpdatePasswordHint('') error = %v", err)
+	}
+
+	// Verify hint is cleared
+	hint, _ := service.GetPasswordHint()
+	if hint != "" {
+		t.Errorf("Hint should be empty after clearing, got %v", hint)
+	}
+}

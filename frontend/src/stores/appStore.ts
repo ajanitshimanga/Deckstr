@@ -5,6 +5,7 @@ import {
   VaultExists,
   IsUnlocked,
   CreateVault,
+  CreateVaultWithHint,
   Unlock,
   Lock,
   GetAllAccounts,
@@ -17,6 +18,9 @@ import {
   AddTag,
   GetUsername,
   GetStoredUsername,
+  GetPasswordHint,
+  ChangePassword,
+  UpdatePasswordHint,
   DetectSignedInAccount,
   MatchAndUpdateAccount,
   IsRiotClientRunning,
@@ -33,6 +37,7 @@ interface AppStore {
   // User info
   username: string
   storedUsername: string // Pre-filled from vault for login
+  passwordHint: string // Password hint displayed on lock screen
 
   // Data
   accounts: models.Account[]
@@ -57,9 +62,11 @@ interface AppStore {
 
   // Actions
   initialize: () => Promise<void>
-  createVault: (username: string, password: string) => Promise<boolean>
+  createVault: (username: string, password: string, hint?: string) => Promise<boolean>
   unlock: (username: string, password: string) => Promise<boolean>
   lock: () => void
+  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
+  updatePasswordHint: (hint: string) => Promise<boolean>
   clearError: () => void
 
   // Account actions
@@ -94,6 +101,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   error: null,
   username: '',
   storedUsername: '',
+  passwordHint: '',
   accounts: [],
   gameNetworks: [],
   tags: [],
@@ -136,10 +144,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         // Start polling for active account
         get().startPolling()
       } else if (exists) {
-        // Get stored username for pre-filling login form
+        // Get stored username and password hint for login form
         try {
-          const storedUsername = await GetStoredUsername()
-          set({ appState: 'locked', storedUsername })
+          const [storedUsername, passwordHint] = await Promise.all([
+            GetStoredUsername(),
+            GetPasswordHint(),
+          ])
+          set({ appState: 'locked', storedUsername, passwordHint: passwordHint || '' })
         } catch {
           set({ appState: 'locked' })
         }
@@ -152,9 +163,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   // Create new vault
-  createVault: async (username: string, password: string) => {
+  createVault: async (username: string, password: string, hint?: string) => {
     try {
-      await CreateVault(username, password)
+      if (hint) {
+        await CreateVaultWithHint(username, password, hint)
+      } else {
+        await CreateVault(username, password)
+      }
       const [accounts, networks, tags, settings] = await Promise.all([
         GetAllAccounts(),
         GetGameNetworks(),
@@ -230,6 +245,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })
     // Resize back to login window size
     SetWindowSizeLogin()
+  },
+
+  // Change password
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    try {
+      await ChangePassword(currentPassword, newPassword)
+      set({ error: null })
+      return true
+    } catch (e) {
+      set({ error: String(e) })
+      return false
+    }
+  },
+
+  // Update password hint (for legacy users or changing hint)
+  updatePasswordHint: async (hint: string) => {
+    try {
+      await UpdatePasswordHint(hint)
+      set({ passwordHint: hint, error: null })
+      return true
+    } catch (e) {
+      set({ error: String(e) })
+      return false
+    }
   },
 
   clearError: () => set({ error: null }),

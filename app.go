@@ -62,9 +62,30 @@ func (a *App) CreateVault(username, masterPassword string) error {
 	return a.storage.CreateVault(username, masterPassword)
 }
 
+// CreateVaultWithHint creates a new vault with username, master password, and optional hint
+func (a *App) CreateVaultWithHint(username, masterPassword, hint string) error {
+	return a.storage.CreateVaultWithHint(username, masterPassword, hint)
+}
+
 // Unlock decrypts the vault with username and master password
 func (a *App) Unlock(username, masterPassword string) error {
 	return a.storage.Unlock(username, masterPassword)
+}
+
+// GetPasswordHint returns the password hint (available without unlocking)
+func (a *App) GetPasswordHint() (string, error) {
+	return a.storage.GetPasswordHint()
+}
+
+// ChangePassword changes the master password (must be unlocked, must provide correct current password)
+func (a *App) ChangePassword(currentPassword, newPassword string) error {
+	return a.storage.ChangePassword(currentPassword, newPassword)
+}
+
+// UpdatePasswordHint updates the password hint (must be unlocked)
+// This allows legacy users to add/change their hint without changing password
+func (a *App) UpdatePasswordHint(hint string) error {
+	return a.storage.UpdatePasswordHint(hint)
 }
 
 // GetUsername returns the currently logged-in username

@@ -15,9 +15,13 @@ import (
 
 const (
 	vaultFileName    = "vault.osm" // OpenSmurfManager vault file
-	vaultVersion     = 1
+	vaultVersion     = 1           // Increment when making breaking changes to vault structure
 	configDirName    = "OpenSmurfManager"
 )
+
+// Migration notes:
+// - v1: Initial release (v1.0.0)
+// - v1 additions (v1.1.0): Added passwordHint field (non-breaking, defaults to empty)
 
 var (
 	ErrVaultNotFound     = errors.New("vault not found")
@@ -34,11 +38,12 @@ type StorageService struct {
 	mu          sync.RWMutex
 
 	// Unlocked state
-	isUnlocked  bool
-	username    string // Current logged-in username
-	derivedKey  []byte
-	salt        []byte
-	vaultData   *models.VaultData
+	isUnlocked   bool
+	username     string // Current logged-in username
+	passwordHint string // Password hint (stored unencrypted)
+	derivedKey   []byte
+	salt         []byte
+	vaultData    *models.VaultData
 }
 
 // NewStorageService creates a new storage service
@@ -84,6 +89,11 @@ func (s *StorageService) IsUnlocked() bool {
 
 // CreateVault creates a new vault with the given username and master password
 func (s *StorageService) CreateVault(username, masterPassword string) error {
+	return s.CreateVaultWithHint(username, masterPassword, "")
+}
+
+// CreateVaultWithHint creates a new vault with an optional password hint
+func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -110,6 +120,7 @@ func (s *StorageService) CreateVault(username, masterPassword string) error {
 	vault := models.Vault{
 		Version:       vaultVersion,
 		Username:      username,
+		PasswordHint:  hint,
 		Salt:          crypto.EncodeBase64(salt),
 		Nonce:         crypto.EncodeBase64(nonce),
 		EncryptedData: crypto.EncodeBase64(ciphertext),
@@ -125,6 +136,7 @@ func (s *StorageService) CreateVault(username, masterPassword string) error {
 	// Keep vault unlocked after creation
 	s.isUnlocked = true
 	s.username = username
+	s.passwordHint = hint
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
@@ -186,6 +198,7 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 	// Store unlocked state
 	s.isUnlocked = true
 	s.username = username
+	s.passwordHint = vault.PasswordHint
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
@@ -203,6 +216,7 @@ func (s *StorageService) Lock() {
 	}
 	s.isUnlocked = false
 	s.username = ""
+	s.passwordHint = ""
 	s.derivedKey = nil
 	s.salt = nil
 	s.vaultData = nil
@@ -225,6 +239,64 @@ func (s *StorageService) GetStoredUsername() (string, error) {
 		return "", err
 	}
 	return vault.Username, nil
+}
+
+// GetPasswordHint returns the password hint stored in the vault file (without unlocking)
+func (s *StorageService) GetPasswordHint() (string, error) {
+	if !s.VaultExists() {
+		return "", ErrVaultNotFound
+	}
+	vault, err := s.loadVaultFile()
+	if err != nil {
+		return "", err
+	}
+	return vault.PasswordHint, nil
+}
+
+// UpdatePasswordHint updates the password hint without changing the password
+// This allows legacy users to add a hint to their existing vault
+func (s *StorageService) UpdatePasswordHint(hint string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isUnlocked {
+		return ErrVaultLocked
+	}
+
+	// Update in-memory hint
+	s.passwordHint = hint
+
+	// Generate new nonce for the save
+	nonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return err
+	}
+
+	// Serialize vault data
+	plaintext, err := json.Marshal(s.vaultData)
+	if err != nil {
+		return fmt.Errorf("failed to serialize vault data: %w", err)
+	}
+
+	// Encrypt with existing derived key
+	ciphertext, err := s.crypto.Encrypt(plaintext, s.derivedKey, nonce)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Update vault structure with new hint
+	vault := models.Vault{
+		Version:       vaultVersion,
+		Username:      s.username,
+		PasswordHint:  hint,
+		Salt:          crypto.EncodeBase64(s.salt),
+		Nonce:         crypto.EncodeBase64(nonce),
+		EncryptedData: crypto.EncodeBase64(ciphertext),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	return s.saveVaultFile(vault)
 }
 
 // Save encrypts and persists the current vault data
@@ -258,6 +330,7 @@ func (s *StorageService) Save() error {
 	vault := models.Vault{
 		Version:       vaultVersion,
 		Username:      s.username,
+		PasswordHint:  s.passwordHint,
 		Salt:          crypto.EncodeBase64(s.salt),
 		Nonce:         crypto.EncodeBase64(nonce),
 		EncryptedData: crypto.EncodeBase64(ciphertext),
@@ -266,6 +339,82 @@ func (s *StorageService) Save() error {
 	}
 
 	return s.saveVaultFile(vault)
+}
+
+// ChangePassword re-encrypts the vault with a new password
+// The user must be unlocked and provide the correct current password
+func (s *StorageService) ChangePassword(currentPassword, newPassword string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isUnlocked {
+		return ErrVaultLocked
+	}
+
+	// Verify current password by attempting to derive key and compare
+	// We do this by re-deriving the key and checking if it matches
+	testKey := s.crypto.DeriveKey(currentPassword, s.salt)
+	defer crypto.ClearBytes(testKey)
+
+	// Compare with stored derived key
+	if len(testKey) != len(s.derivedKey) {
+		return ErrInvalidPassword
+	}
+	for i := range testKey {
+		if testKey[i] != s.derivedKey[i] {
+			return ErrInvalidPassword
+		}
+	}
+
+	// Generate new salt and nonce for the new password
+	newSalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return fmt.Errorf("failed to generate new salt: %w", err)
+	}
+
+	newNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return fmt.Errorf("failed to generate new nonce: %w", err)
+	}
+
+	// Derive new key from new password
+	newKey := s.crypto.DeriveKey(newPassword, newSalt)
+
+	// Serialize vault data
+	plaintext, err := json.Marshal(s.vaultData)
+	if err != nil {
+		return fmt.Errorf("failed to serialize vault data: %w", err)
+	}
+
+	// Encrypt with new key
+	ciphertext, err := s.crypto.Encrypt(plaintext, newKey, newNonce)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Create new vault structure
+	vault := models.Vault{
+		Version:       vaultVersion,
+		Username:      s.username,
+		PasswordHint:  s.passwordHint,
+		Salt:          crypto.EncodeBase64(newSalt),
+		Nonce:         crypto.EncodeBase64(newNonce),
+		EncryptedData: crypto.EncodeBase64(ciphertext),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	// Save to file
+	if err := s.saveVaultFile(vault); err != nil {
+		return err
+	}
+
+	// Clear old key and update state
+	crypto.ClearBytes(s.derivedKey)
+	s.derivedKey = newKey
+	s.salt = newSalt
+
+	return nil
 }
 
 // GetVaultData returns a copy of the current vault data
@@ -310,7 +459,28 @@ func (s *StorageService) loadVaultFile() (*models.Vault, error) {
 		return nil, fmt.Errorf("failed to parse vault file: %w", err)
 	}
 
+	// Run any necessary migrations
+	if err := s.migrateVault(&vault); err != nil {
+		return nil, fmt.Errorf("failed to migrate vault: %w", err)
+	}
+
 	return &vault, nil
+}
+
+// migrateVault handles data migrations between vault versions
+// This function should be idempotent and handle all version upgrades
+func (s *StorageService) migrateVault(vault *models.Vault) error {
+	// Current version - no migrations needed yet
+	// When adding breaking changes in future versions, add migration logic here:
+	//
+	// if vault.Version < 2 {
+	//     // Migrate from v1 to v2
+	//     vault.NewField = defaultValue
+	//     vault.Version = 2
+	//     // Note: Caller should save after successful unlock to persist migration
+	// }
+
+	return nil
 }
 
 // saveVaultFile writes the vault to disk

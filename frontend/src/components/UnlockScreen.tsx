@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useAppStore } from '../stores/appStore'
-import { Lock, Eye, EyeOff, KeyRound, User } from 'lucide-react'
+import { Lock, Eye, EyeOff, KeyRound, User, HelpCircle } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export function UnlockScreen() {
-  const { appState, storedUsername, createVault, unlock, error, clearError } = useAppStore()
+  const { appState, storedUsername, passwordHint, createVault, unlock, error, clearError } = useAppStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [hint, setHint] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showHint, setShowHint] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const isCreating = appState === 'create'
@@ -34,7 +36,7 @@ export function UnlockScreen() {
 
     setLoading(true)
     if (isCreating) {
-      await createVault(username, password)
+      await createVault(username, password, hint || undefined)
     } else {
       await unlock(username, password)
     }
@@ -126,33 +128,81 @@ export function UnlockScreen() {
           </div>
 
           {isCreating && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-[var(--color-foreground)]">
-                Confirm Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-muted-foreground)]" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm password"
-                  className={cn(
-                    'w-full pl-10 pr-4 py-3 rounded-lg',
-                    'bg-[var(--color-card)] border',
-                    password && confirmPassword && !passwordsMatch
-                      ? 'border-[var(--color-destructive)]'
-                      : 'border-[var(--color-border)]',
-                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent',
-                    'transition-all duration-200'
-                  )}
-                />
+            <>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-[var(--color-foreground)]">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-muted-foreground)]" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm password"
+                    className={cn(
+                      'w-full pl-10 pr-4 py-3 rounded-lg',
+                      'bg-[var(--color-card)] border',
+                      password && confirmPassword && !passwordsMatch
+                        ? 'border-[var(--color-destructive)]'
+                        : 'border-[var(--color-border)]',
+                      'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                      'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent',
+                      'transition-all duration-200'
+                    )}
+                  />
+                </div>
+                {password && confirmPassword && !passwordsMatch && (
+                  <p className="text-sm text-[var(--color-destructive)]">
+                    Passwords do not match
+                  </p>
+                )}
               </div>
-              {password && confirmPassword && !passwordsMatch && (
-                <p className="text-sm text-[var(--color-destructive)]">
-                  Passwords do not match
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-[var(--color-foreground)]">
+                  Password Hint <span className="text-[var(--color-muted-foreground)] font-normal">(optional)</span>
+                </label>
+                <div className="relative">
+                  <HelpCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-muted-foreground)]" />
+                  <input
+                    type="text"
+                    value={hint}
+                    onChange={(e) => setHint(e.target.value)}
+                    placeholder="e.g., My favorite pet's name"
+                    className={cn(
+                      'w-full pl-10 pr-4 py-3 rounded-lg',
+                      'bg-[var(--color-card)] border border-[var(--color-border)]',
+                      'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                      'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent',
+                      'transition-all duration-200'
+                    )}
+                  />
+                </div>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  This hint will be shown on the login screen to help you remember your password
                 </p>
+              </div>
+            </>
+          )}
+
+          {/* Show password hint for returning users */}
+          {!isCreating && passwordHint && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowHint(!showHint)}
+                className="flex items-center gap-2 text-sm text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 transition-colors"
+              >
+                <HelpCircle className="w-4 h-4" />
+                {showHint ? 'Hide password hint' : 'Show password hint'}
+              </button>
+              {showHint && (
+                <div className="p-3 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20">
+                  <p className="text-sm text-[var(--color-foreground)]">
+                    <span className="font-medium">Hint:</span> {passwordHint}
+                  </p>
+                </div>
               )}
             </div>
           )}

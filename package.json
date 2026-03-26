@@ -1,0 +1,13 @@
+{
+  "name": "opensmurfmanager",
+  "version": "1.1.0",
+  "description": "Secure local account manager for gamers",
+  "scripts": {
+    "icons": "node scripts/convert-icon.js",
+    "test": "go test ./..."
+  },
+  "devDependencies": {
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
+  }
+}
