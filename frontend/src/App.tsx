@@ -21,17 +21,24 @@ function App() {
       // Small delay to let the UI settle first
       const timer = setTimeout(() => {
         checkForUpdates()
-      }, 1000)
+      }, 1500)
       return () => clearTimeout(timer)
     }
   }, [appState])
 
-  // Also check when unlocking (in case they were on lock screen a while)
+  // Periodic update check every 30 minutes
   useEffect(() => {
-    if (appState === 'unlocked' && settings?.autoCheckUpdates !== false) {
-      checkForUpdates()
-    }
-  }, [appState])
+    if (appState === 'loading') return
+
+    const interval = setInterval(() => {
+      // Only auto-check if setting allows (when unlocked) or always on lock screen
+      if (appState !== 'unlocked' || settings?.autoCheckUpdates !== false) {
+        checkForUpdates()
+      }
+    }, 30 * 60 * 1000) // 30 minutes
+
+    return () => clearInterval(interval)
+  }, [appState, settings?.autoCheckUpdates])
 
   // Loading state
   if (appState === 'loading') {
