@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAppStore } from './stores/appStore'
 import { UnlockScreen } from './components/UnlockScreen'
 import { AccountList } from './components/AccountList'
@@ -7,21 +7,31 @@ import './style.css'
 
 function App() {
   const { appState, initialize, settings, checkForUpdates } = useAppStore()
+  const hasCheckedForUpdates = useRef(false)
 
   useEffect(() => {
     initialize()
   }, [])
 
-  // Check for updates when app is unlocked and autoCheckUpdates is enabled
+  // Check for updates on app startup (before login for safety)
+  // This ensures users can update even if they forgot their password
   useEffect(() => {
-    if (appState === 'unlocked' && settings?.autoCheckUpdates !== false) {
+    if (appState !== 'loading' && !hasCheckedForUpdates.current) {
+      hasCheckedForUpdates.current = true
       // Small delay to let the UI settle first
       const timer = setTimeout(() => {
         checkForUpdates()
       }, 1000)
       return () => clearTimeout(timer)
     }
-  }, [appState, settings?.autoCheckUpdates])
+  }, [appState])
+
+  // Also check when unlocking (in case they were on lock screen a while)
+  useEffect(() => {
+    if (appState === 'unlocked' && settings?.autoCheckUpdates !== false) {
+      checkForUpdates()
+    }
+  }, [appState])
 
   // Loading state
   if (appState === 'loading') {
@@ -35,9 +45,14 @@ function App() {
     )
   }
 
-  // Locked or Create states
+  // Locked or Create states - also show UpdateModal here
   if (appState === 'locked' || appState === 'create') {
-    return <UnlockScreen />
+    return (
+      <>
+        <UnlockScreen />
+        <UpdateModal />
+      </>
+    )
   }
 
   // Unlocked state
