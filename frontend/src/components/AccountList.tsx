@@ -785,13 +785,21 @@ function RankDisplay({ rank }: { rank: models.CachedRank }) {
     }
   }
 
-  const getGameLabel = (gameId: string) => {
-    switch (gameId) {
-      case 'lol': return 'LoL'
-      case 'tft': return 'TFT'
-      case 'valorant': return 'VAL'
-      default: return gameId
+  const getGameLabel = (gameId: string, queueName?: string) => {
+    const game = (() => {
+      switch (gameId) {
+        case 'lol': return 'LoL'
+        case 'tft': return 'TFT'
+        case 'valorant': return 'VAL'
+        default: return gameId
+      }
+    })()
+
+    // If we have a queue name, show "Game Mode" format
+    if (queueName) {
+      return `${game} ${queueName}`
     }
+    return game
   }
 
   // Calculate winrate
@@ -806,7 +814,7 @@ function RankDisplay({ rank }: { rank: models.CachedRank }) {
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-[10px] text-[var(--color-muted-foreground)] w-6 shrink-0">{getGameLabel(rank.gameId)}</span>
+      <span className="text-[10px] text-[var(--color-muted-foreground)] shrink-0">{getGameLabel(rank.gameId, rank.queueName)}</span>
       <span className={cn(
         'px-2.5 py-1 rounded-full text-xs font-semibold border',
         getTierStyle(rank.tier)
