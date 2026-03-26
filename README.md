@@ -301,6 +301,23 @@ Not yet. The vault file is at `%APPDATA%\OpenSmurfManager\vault.osm` — you cou
 
 ---
 
+## Support the Project
+
+If OpenSmurfManager saves you time, consider supporting development:
+
+<p align="center">
+  <a href="https://github.com/sponsors/ajanitshimanga">
+    <img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=for-the-badge&logo=github" alt="Sponsor on GitHub">
+  </a>
+</p>
+
+Your support helps fund:
+- New features (Valorant rank tracking, cloud sync, and more)
+- Bug fixes and security updates
+- Keeping the core app free forever
+
+---
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
@@ -311,6 +328,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 **Made with security in mind**
 
-[Report Bug](https://github.com/ajanitshimanga/OpenSmurfManager/issues) · [Request Feature](https://github.com/ajanitshimanga/OpenSmurfManager/issues)
+[Report Bug](https://github.com/ajanitshimanga/OpenSmurfManager/issues) · [Request Feature](https://github.com/ajanitshimanga/OpenSmurfManager/issues) · [Sponsor](https://github.com/sponsors/ajanitshimanga)
 
 </div>
