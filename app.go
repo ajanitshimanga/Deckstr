@@ -346,8 +346,8 @@ func (a *App) IsRiotClientRunning() bool {
 
 // SetWindowSizeLogin sets the window to login/compact size (vertical)
 func (a *App) SetWindowSizeLogin() {
-	runtime.WindowSetMinSize(a.ctx, 380, 620)
-	runtime.WindowSetSize(a.ctx, 380, 620)
+	runtime.WindowSetMinSize(a.ctx, 380, 650)
+	runtime.WindowSetSize(a.ctx, 380, 700)
 }
 
 // SetWindowSizeMain sets the window to main/dashboard size (horizontal)

@@ -6,6 +6,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
@@ -20,9 +21,9 @@ func main() {
 	err := wails.Run(&options.App{
 		Title:     "SmurfManager",
 		Width:     380,
-		Height:    620,
+		Height:    700,
 		MinWidth:  380,
-		MinHeight: 620,
+		MinHeight: 650,
 		MaxWidth:  700,
 		MaxHeight: 900,
 		AssetServer: &assetserver.Options{
@@ -30,6 +31,12 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 15, G: 15, B: 15, A: 1}, // Match --color-background
 		OnStartup:        app.startup,
+		Windows: &windows.Options{
+			DisableFramelessWindowDecorations: false,
+			WebviewIsTransparent:              false,
+			WindowIsTranslucent:               false,
+			DisableWindowIcon:                 false,
+		},
 		Bind: []interface{}{
 			app,
 		},
