@@ -27,7 +27,9 @@ Managing multiple gaming accounts is a pain. Spreadsheets leak, browser password
 
 ### Built by a Competitive Player
 
-> *"I'm a Top 500 Overwatch player, Top 1000 in Valorant, Eternity in Marvel Rivals, and multi-season Grand Champion in Rocket League. I have accounts at every rank because that's the only way to actually play with all my friends. I got tired of spreadsheets."*
+> *"Previously, I peaked Top 500 in Overwatch, Top 1000 in Valorant, Eternity in Marvel Rivals, and multi-season Grand Champion in Rocket League. I have accounts at every rank because that's the only way to actually play with all my friends. I got tired of spreadsheets."*
+>
+> *Next goal: Challenger in TFT. If you're curious, come hang out.*
 
 This isn't about stomping lower-ranked lobbies—it's about being able to queue with friends at different skill levels without a 3-division gap locking you out. If you've ever had to remember which account has which rank, which champions, or which region, this tool is for you.
 
