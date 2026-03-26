@@ -97,19 +97,13 @@ This isn't about stomping lower-ranked lobbies—it's about being able to queue 
 
 ## Screenshots
 
-<details>
-<summary>Click to view screenshots</summary>
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="350">
+</p>
 
-### Login Screen
-Clean, secure login with optional password hints.
-
-### Dashboard
-View all your accounts with ranks and quick-copy buttons.
-
-### Account Detection
-Automatically detects and links your signed-in Riot account.
-
-</details>
+<p align="center">
+  <em>Track ranks across LoL, TFT, and more. One-click copy credentials. Auto-detect your signed-in account.</em>
+</p>
 
 ---
 
