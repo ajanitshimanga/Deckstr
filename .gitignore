@@ -1,0 +1,40 @@
+# Build outputs
+build/bin/
+build/installer/*.exe
+
+# Frontend dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Wails generated files
+frontend/wailsjs/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.bak
