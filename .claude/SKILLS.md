@@ -320,3 +320,76 @@ npm run icons                # Convert SVG to all icon formats
 # Git
 git tag v1.2.3 && git push origin master && git push origin v1.2.3
 ```
+
+---
+
+## Pickup Notes (Last Updated: 2026-03-28)
+
+### Current State
+- **Version**: v1.2.0 released, working on polling improvements (not yet released)
+- **Latest Commit**: `05c2b3c` - fix: polling reliability and profile switching
+
+### What Was Done This Session
+
+**Polling Reliability Fixes:**
+1. Profile-aware failure thresholds (instant=1, balanced/eco=2)
+2. Fixed infinite backoff bug in catch block (now resets failures after threshold)
+3. Profile change restarts polling immediately (applies new interval)
+4. HTTP timeout reduced 10s → 2s for faster failure detection
+5. HMR duplicate polling fix (clears existing timeout before starting)
+6. Reset pollingFailures after clearing account
+
+**New Features:**
+- Gameplay detection pauses LCU polling during active games
+- Platform-aware process detection (`internal/process/detector.go`)
+- `DESIGN_PRINCIPLES.md` added
+
+### To Investigate Next
+
+**Polling Profile Timing Variance:**
+- User reported eco mode (15s) felt "too smooth" - profiles might not be applying correctly
+- Added debug logging but didn't fully trace the issue
+- Debug logs were cleaned up before push
+
+**How to Debug:**
+```typescript
+// In getPollingIntervals(), add:
+console.log('[POLL] Profile:', profile, '| Interval:', intervals.lobbyMs, 'ms')
+
+// In schedulePoll(), add:
+console.log('[POLL] Scheduling next poll in', currentBackoff, 'ms')
+```
+
+Run `wails dev`, open DevTools (F12), switch profiles in Settings, and watch console to verify intervals change.
+
+### Key Files Changed
+- `frontend/src/stores/appStore.ts` - Polling logic, profile switching
+- `internal/riotclient/lcu.go` - HTTP timeout (2s)
+- `internal/riotclient/detector.go` - Error types
+- `internal/process/detector.go` - NEW: Platform process detection
+- `internal/models/models.go` - PlatformProcesses, polling constants
+
+### Polling Architecture
+
+```
+POLLING_PROFILES (appStore.ts)
+├── instant:  { lobbyMs: 1000,  inGameMs: 15000, failureThreshold: 1 }
+├── balanced: { lobbyMs: 5000,  inGameMs: 30000, failureThreshold: 2 }
+└── eco:      { lobbyMs: 15000, inGameMs: 60000, failureThreshold: 2 }
+
+Flow:
+1. getPollingIntervals() reads settings?.pollingProfile
+2. pollForActiveAccount() uses intervals for backoff
+3. schedulePoll() uses pollingBackoffMs for setTimeout
+4. On success: pollingBackoffMs = intervals.lobbyMs
+5. On failure: exponential backoff up to 5 min cap
+6. After threshold failures: reset to base interval
+```
+
+### Not Yet Released
+All changes since v1.2.0 are on master but not tagged for release. When ready:
+```bash
+# Update frontend/package.json version
+git tag v1.2.1
+git push origin v1.2.1
+```
