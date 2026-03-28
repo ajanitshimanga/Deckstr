@@ -7,6 +7,7 @@ import (
 
 	"OpenSmurfManager/internal/accounts"
 	"OpenSmurfManager/internal/models"
+	"OpenSmurfManager/internal/process"
 	"OpenSmurfManager/internal/riotapi"
 	"OpenSmurfManager/internal/riotclient"
 	"OpenSmurfManager/internal/storage"
@@ -240,6 +241,34 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 // Returns the detected account info with ranks, or nil if no client is running
 func (a *App) DetectSignedInAccount() (*riotclient.DetectedAccount, error) {
 	return riotclient.DetectAndFetchRanks()
+}
+
+// IsInGame checks if the user is currently in an active game (not just client/lobby)
+// Returns true if any game process from any supported game is running
+// Used to pause polling during gameplay to avoid any performance impact
+func (a *App) IsInGame() bool {
+	// Collect all game processes for current platform from all supported games
+	var allGameProcesses []string
+	for _, network := range models.DefaultGameNetworks() {
+		for _, game := range network.Games {
+			allGameProcesses = append(allGameProcesses, game.GameProcesses.ForCurrentPlatform()...)
+		}
+	}
+
+	return process.AnyRunning(allGameProcesses)
+}
+
+// GetActiveGameProcess returns the name of the currently running game process
+// Returns empty string if no game is running (user is in lobby or client closed)
+func (a *App) GetActiveGameProcess() string {
+	var allGameProcesses []string
+	for _, network := range models.DefaultGameNetworks() {
+		for _, game := range network.Games {
+			allGameProcesses = append(allGameProcesses, game.GameProcesses.ForCurrentPlatform()...)
+		}
+	}
+
+	return process.GetRunningProcess(allGameProcesses)
 }
 
 // MatchAndUpdateAccount matches detected account to stored accounts and updates ranks

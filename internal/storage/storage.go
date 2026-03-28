@@ -44,6 +44,12 @@ type StorageService struct {
 	derivedKey   []byte
 	salt         []byte
 	vaultData    *models.VaultData
+
+	// Recovery phrase fields (preserved across saves)
+	recoveryPhraseHash string
+	recoveryPhraseSalt string
+	recoveryKeyNonce   string
+	encryptedVaultKey  string
 }
 
 // NewStorageService creates a new storage service
@@ -195,6 +201,9 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 		return fmt.Errorf("failed to deserialize vault data: %w", err)
 	}
 
+	// Always regenerate GameNetworks from defaults (not user-customizable, avoids schema migration issues)
+	vaultData.GameNetworks = models.DefaultGameNetworks()
+
 	// Store unlocked state
 	s.isUnlocked = true
 	s.username = username
@@ -202,6 +211,12 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
+
+	// Preserve recovery phrase fields for Save() operations
+	s.recoveryPhraseHash = vault.RecoveryPhraseHash
+	s.recoveryPhraseSalt = vault.RecoveryPhraseSalt
+	s.recoveryKeyNonce = vault.RecoveryKeyNonce
+	s.encryptedVaultKey = vault.EncryptedVaultKey
 
 	return nil
 }
@@ -284,16 +299,20 @@ func (s *StorageService) UpdatePasswordHint(hint string) error {
 		return fmt.Errorf("failed to encrypt vault: %w", err)
 	}
 
-	// Update vault structure with new hint
+	// Update vault structure with new hint (preserving recovery phrase fields)
 	vault := models.Vault{
-		Version:       vaultVersion,
-		Username:      s.username,
-		PasswordHint:  hint,
-		Salt:          crypto.EncodeBase64(s.salt),
-		Nonce:         crypto.EncodeBase64(nonce),
-		EncryptedData: crypto.EncodeBase64(ciphertext),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		Version:            vaultVersion,
+		Username:           s.username,
+		PasswordHint:       hint,
+		Salt:               crypto.EncodeBase64(s.salt),
+		Nonce:              crypto.EncodeBase64(nonce),
+		EncryptedData:      crypto.EncodeBase64(ciphertext),
+		RecoveryPhraseHash: s.recoveryPhraseHash,
+		RecoveryPhraseSalt: s.recoveryPhraseSalt,
+		RecoveryKeyNonce:   s.recoveryKeyNonce,
+		EncryptedVaultKey:  s.encryptedVaultKey,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	return s.saveVaultFile(vault)
@@ -326,16 +345,20 @@ func (s *StorageService) Save() error {
 		return fmt.Errorf("failed to encrypt vault: %w", err)
 	}
 
-	// Update vault structure
+	// Update vault structure (preserving recovery phrase fields)
 	vault := models.Vault{
-		Version:       vaultVersion,
-		Username:      s.username,
-		PasswordHint:  s.passwordHint,
-		Salt:          crypto.EncodeBase64(s.salt),
-		Nonce:         crypto.EncodeBase64(nonce),
-		EncryptedData: crypto.EncodeBase64(ciphertext),
-		CreatedAt:     time.Now(), // This will be overwritten if loading
-		UpdatedAt:     time.Now(),
+		Version:            vaultVersion,
+		Username:           s.username,
+		PasswordHint:       s.passwordHint,
+		Salt:               crypto.EncodeBase64(s.salt),
+		Nonce:              crypto.EncodeBase64(nonce),
+		EncryptedData:      crypto.EncodeBase64(ciphertext),
+		RecoveryPhraseHash: s.recoveryPhraseHash,
+		RecoveryPhraseSalt: s.recoveryPhraseSalt,
+		RecoveryKeyNonce:   s.recoveryKeyNonce,
+		EncryptedVaultKey:  s.encryptedVaultKey,
+		CreatedAt:          time.Now(), // This will be overwritten if loading
+		UpdatedAt:          time.Now(),
 	}
 
 	return s.saveVaultFile(vault)
@@ -724,6 +747,12 @@ func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
 		return "", err
 	}
 
+	// Update in-memory fields so subsequent Save() calls preserve them
+	s.recoveryPhraseHash = vault.RecoveryPhraseHash
+	s.recoveryPhraseSalt = vault.RecoveryPhraseSalt
+	s.recoveryKeyNonce = vault.RecoveryKeyNonce
+	s.encryptedVaultKey = vault.EncryptedVaultKey
+
 	return recoveryPhrase, nil
 }
 
@@ -835,6 +864,12 @@ func (s *StorageService) RegenerateRecoveryPhrase(password string) (string, erro
 	if err := s.saveVaultFile(updatedVault); err != nil {
 		return "", err
 	}
+
+	// Update in-memory fields so subsequent Save() calls preserve them
+	s.recoveryPhraseHash = updatedVault.RecoveryPhraseHash
+	s.recoveryPhraseSalt = updatedVault.RecoveryPhraseSalt
+	s.recoveryKeyNonce = updatedVault.RecoveryKeyNonce
+	s.encryptedVaultKey = updatedVault.EncryptedVaultKey
 
 	return recoveryPhrase, nil
 }

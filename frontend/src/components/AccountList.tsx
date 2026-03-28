@@ -425,9 +425,7 @@ export function AccountList() {
                 const network = gameNetworks.find(n => n.id === account.networkId)
                 const isPasswordVisible = visiblePasswords.has(account.id)
                 // Check if this account is the currently signed-in one
-                const isActive = activeAccountId === account.id ||
-                  (detectedAccount && account.riotId &&
-                    account.riotId.toLowerCase() === detectedAccount.RiotID?.toLowerCase())
+                const isActive = activeAccountId === account.id
 
                 return (
                   <div

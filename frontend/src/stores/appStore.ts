@@ -1,6 +1,35 @@
 import { create } from 'zustand'
 import type { AppState, AccountInput } from '../lib/types'
 import { models } from '../../wailsjs/go/models'
+
+// Polling profile configurations (lobby ms, in-game ms, failure threshold)
+// Profiles balance UI responsiveness vs system resource usage
+// failureThreshold controls how many empty detections before clearing active account
+export const POLLING_PROFILES = {
+  instant: {
+    name: 'Instant',
+    description: 'Real-time updates, more resources',
+    lobbyMs: 1000,    // 1s - real-time feel
+    inGameMs: 15000,  // 15s - still checks periodically
+    failureThreshold: 1, // Clear on first failure for instant feedback
+  },
+  balanced: {
+    name: 'Balanced',
+    description: 'Good responsiveness, minimal impact',
+    lobbyMs: 5000,    // 5s - responsive enough
+    inGameMs: 30000,  // 30s - light touch during gameplay
+    failureThreshold: 2, // Tolerate 1 hiccup (10s total)
+  },
+  eco: {
+    name: 'Eco',
+    description: 'Minimal resources, slower updates',
+    lobbyMs: 15000,   // 15s - background mode
+    inGameMs: 60000,  // 60s - near-zero impact
+    failureThreshold: 2, // Tolerate 1 hiccup (30s total)
+  },
+} as const
+
+export type PollingProfile = keyof typeof POLLING_PROFILES
 import {
   VaultExists,
   IsUnlocked,
@@ -30,6 +59,7 @@ import {
   DetectSignedInAccount,
   MatchAndUpdateAccount,
   IsRiotClientRunning,
+  IsInGame,
   SetWindowSizeLogin,
   SetWindowSizeMain,
   GetAppVersion,
@@ -67,6 +97,7 @@ interface AppStore {
   riotClientRunning: boolean
   activeAccountId: string | null // Currently signed-in account ID
   isPolling: boolean
+  isInGame: boolean // True when user is in active gameplay (pauses LCU polling)
   // Polling reliability state
   _pollInProgress: boolean // Mutex to prevent overlapping polls
   pollingFailures: number // Consecutive failures for backoff
@@ -122,6 +153,7 @@ interface AppStore {
   // Detection actions
   detectAndUpdateRanks: () => Promise<string | null>
   checkRiotClient: () => Promise<boolean>
+  getPollingIntervals: () => { name: string; description: string; lobbyMs: number; inGameMs: number; failureThreshold: number }
   pollForActiveAccount: () => Promise<void>
   startPolling: () => void
   stopPolling: () => void
@@ -162,9 +194,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   riotClientRunning: false,
   activeAccountId: null,
   isPolling: false,
+  isInGame: false,
   _pollInProgress: false,
   pollingFailures: 0,
-  pollingBackoffMs: 10000, // Start at 10 seconds
+  pollingBackoffMs: 5000, // Default, actual value set by polling profile
   lastRankSyncTime: null,
   pendingRankSync: false,
   rankSyncError: null,
@@ -537,12 +570,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // Reload accounts to get updated data
       await get().loadAccounts()
 
-      set({ isDetecting: false, activeAccountId: matchedId || null })
+      set({ isDetecting: false, activeAccountId: matchedId || null, lastRankSyncTime: Date.now() })
       return matchedId || null
     } catch (e) {
       set({ isDetecting: false, error: String(e), activeAccountId: null })
       return null
     }
+  },
+
+  // Get polling intervals based on current profile setting
+  getPollingIntervals: () => {
+    const profile = get().settings?.pollingProfile || 'balanced'
+    return POLLING_PROFILES[profile as PollingProfile] || POLLING_PROFILES.balanced
   },
 
   // Lightweight polling - just checks who's signed in without updating ranks
@@ -551,20 +590,52 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (get()._pollInProgress) return
     set({ _pollInProgress: true })
 
+    const intervals = get().getPollingIntervals()
+
     try {
+      // Check if user is in active gameplay - skip LCU polling to avoid any performance impact
+      const inGame = await IsInGame()
+
+      if (inGame) {
+        // User is in-game: keep current state, use longer polling interval
+        set({
+          isInGame: true,
+          _pollInProgress: false,
+          pollingFailures: 0, // Reset failures when in-game (client is working)
+          pollingBackoffMs: intervals.inGameMs,
+        })
+        return
+      }
+
+      // Not in-game: continue with LCU check
+      set({ isInGame: false })
+
       const detected = await DetectSignedInAccount()
 
       // Check if we got a valid detection (has RiotID)
       if (!detected || !detected.RiotID) {
-        set({
-          detectedAccount: null,
-          activeAccountId: null,
-          riotClientRunning: false,
-          _pollInProgress: false,
-          // Reset backoff on empty detection (client not running is expected)
-          pollingFailures: 0,
-          pollingBackoffMs: 10000,
-        })
+        // Increment failure count for empty detection too
+        const failures = get().pollingFailures + 1
+        const threshold = intervals.failureThreshold || 2
+
+        // Clear active account after reaching threshold (profile-aware)
+        if (failures >= threshold) {
+          set({
+            detectedAccount: null,
+            activeAccountId: null,
+            riotClientRunning: false,
+            _pollInProgress: false,
+            pollingFailures: 0, // Reset after clearing - no backoff on subsequent empty polls
+            pollingBackoffMs: intervals.lobbyMs,
+          })
+        } else {
+          // Keep existing state on temporary failures
+          set({
+            riotClientRunning: false,
+            _pollInProgress: false,
+            pollingFailures: failures,
+          })
+        }
         return
       }
 
@@ -588,7 +659,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         _pollInProgress: false,
         // Reset backoff on success
         pollingFailures: 0,
-        pollingBackoffMs: 10000,
+        pollingBackoffMs: intervals.lobbyMs,
       })
 
       // Trigger rank sync on new account detection (if auto-sync enabled and cooldown passed)
@@ -601,27 +672,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     } catch {
       // Client closed or error - apply exponential backoff
+      const intervals = get().getPollingIntervals()
       const failures = get().pollingFailures + 1
-      // Backoff: 10s, 15s, 22s, 33s... max 5 minutes
-      const backoff = Math.min(10000 * Math.pow(1.5, failures), 300000)
+      const threshold = intervals.failureThreshold || 2
+      // Exponential backoff starting from lobby interval, max 5 minutes
+      const backoff = Math.min(intervals.lobbyMs * Math.pow(1.5, failures), 300000)
 
-      set({
-        detectedAccount: null,
-        riotClientRunning: false,
-        activeAccountId: null,
-        _pollInProgress: false,
-        pollingFailures: failures,
-        pollingBackoffMs: backoff,
-      })
+      // Clear active account after reaching threshold (profile-aware)
+      if (failures >= threshold) {
+        set({
+          detectedAccount: null,
+          riotClientRunning: false,
+          activeAccountId: null,
+          _pollInProgress: false,
+          pollingFailures: 0, // Reset after clearing - prevents infinite backoff growth
+          pollingBackoffMs: intervals.lobbyMs, // Back to base interval, not exponential
+        })
+      } else {
+        // Keep existing detection state on temporary failures
+        set({
+          _pollInProgress: false,
+          pollingFailures: failures,
+          pollingBackoffMs: backoff,
+        })
+      }
     }
   },
 
   startPolling: () => {
+    // Always clear any existing polling first (handles HMR restarts)
+    const existingTimeout = (window as any).__pollingTimeoutId
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+      ;(window as any).__pollingTimeoutId = null
+    }
+
     if (get().isPolling) return
-    set({ isPolling: true, pollingFailures: 0, pollingBackoffMs: 10000 })
+    const intervals = get().getPollingIntervals()
+    set({ isPolling: true, pollingFailures: 0, pollingBackoffMs: intervals.lobbyMs })
 
     // Schedule next poll with dynamic backoff
     const schedulePoll = () => {
+      const currentBackoff = get().pollingBackoffMs
+
       const timeoutId = setTimeout(async () => {
         if (!get().isPolling) return
 
@@ -631,7 +724,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (get().isPolling) {
           schedulePoll()
         }
-      }, get().pollingBackoffMs)
+      }, currentBackoff)
 
       // Store timeout ID for cleanup
       ;(window as any).__pollingTimeoutId = timeoutId
@@ -762,8 +855,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateSettings: async (settings: models.Settings) => {
     try {
+      const oldProfile = get().settings?.pollingProfile
       await UpdateSettings(settings)
       set({ settings, error: null })
+
+      // Restart polling if profile changed (applies new intervals immediately)
+      if (settings.pollingProfile !== oldProfile && get().isPolling) {
+        get().stopPolling()
+        get().startPolling()
+      }
+
       return true
     } catch (e) {
       set({ error: String(e) })

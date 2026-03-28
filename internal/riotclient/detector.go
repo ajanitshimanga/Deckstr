@@ -171,11 +171,15 @@ func UpdateAccountRanks(account *models.Account, detected *DetectedAccount) {
 		account.RiotID = detected.RiotID
 	}
 
-	// Update cached ranks
-	account.CachedRanks = detected.Ranks
+	// Only update cached ranks if we got new data (don't wipe existing on API failure)
+	if len(detected.Ranks) > 0 {
+		account.CachedRanks = detected.Ranks
+	}
 
-	// Update top masteries
-	account.TopMasteries = detected.TopMasteries
+	// Only update top masteries if we got new data
+	if len(detected.TopMasteries) > 0 {
+		account.TopMasteries = detected.TopMasteries
+	}
 
 	account.UpdatedAt = time.Now()
 }

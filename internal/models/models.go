@@ -1,6 +1,39 @@
 package models
 
-import "time"
+import (
+	"runtime"
+	"time"
+)
+
+// Platform constants for process configuration
+const (
+	PlatformWindows = "windows"
+	PlatformMacOS   = "darwin"
+	PlatformLinux   = "linux"
+)
+
+// PlatformProcesses maps platform to process names
+// Allows each game to define different process names per OS
+type PlatformProcesses struct {
+	Windows []string `json:"windows,omitempty"`
+	MacOS   []string `json:"darwin,omitempty"`
+	Linux   []string `json:"linux,omitempty"`
+}
+
+// ForCurrentPlatform returns the process names for the current OS
+// Returns empty slice if game doesn't exist natively on this platform
+func (p PlatformProcesses) ForCurrentPlatform() []string {
+	switch runtime.GOOS {
+	case PlatformWindows:
+		return p.Windows
+	case PlatformMacOS:
+		return p.MacOS
+	case PlatformLinux:
+		return p.Linux
+	default:
+		return nil
+	}
+}
 
 // GameNetwork represents a gaming platform (e.g., Riot Games, Steam)
 type GameNetwork struct {
@@ -11,11 +44,12 @@ type GameNetwork struct {
 
 // Game represents a specific game within a network
 type Game struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	NetworkID     string `json:"networkId"`
-	ClientProcess string `json:"clientProcess"` // Process name to detect
-	ClientTitle   string `json:"clientTitle"`   // Window title pattern
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	NetworkID     string            `json:"networkId"`
+	ClientProcess PlatformProcesses `json:"clientProcess"` // Lobby/client process per platform
+	ClientTitle   string            `json:"clientTitle"`   // Window title pattern
+	GameProcesses PlatformProcesses `json:"gameProcesses"` // In-game processes per platform (polling pauses)
 }
 
 // Account represents a gaming account with encrypted credentials
@@ -121,10 +155,17 @@ type Vault struct {
 // VaultData represents the decrypted vault contents
 type VaultData struct {
 	Accounts     []Account     `json:"accounts"`
-	GameNetworks []GameNetwork `json:"gameNetworks"`
+	GameNetworks []GameNetwork `json:"-"` // Excluded from JSON - always regenerated from DefaultGameNetworks()
 	Tags         []string      `json:"tags"` // All available tags
 	Settings     Settings      `json:"settings"`
 }
+
+// Polling profile constants
+const (
+	PollingProfileInstant  = "instant"  // 2s lobby, 15s in-game - fastest UI updates
+	PollingProfileBalanced = "balanced" // 5s lobby, 30s in-game - good UX, minimal impact (default)
+	PollingProfileEco      = "eco"      // 15s lobby, 60s in-game - minimal resource usage
+)
 
 // Settings represents user preferences
 type Settings struct {
@@ -133,6 +174,10 @@ type Settings struct {
 	MinimizeToTray   bool `json:"minimizeToTray"`
 	DarkMode         bool `json:"darkMode"`
 	AutoCheckUpdates bool `json:"autoCheckUpdates"` // Check for updates on startup (default: true)
+
+	// Polling profile - controls update frequency vs resource usage tradeoff
+	// "instant" = fastest updates, "balanced" = default, "eco" = minimal resources
+	PollingProfile string `json:"pollingProfile,omitempty"`
 
 	// Rank sync settings
 	AutoRankSync       bool `json:"autoRankSync"`       // Auto-sync ranks on account detection (default: true)
@@ -145,7 +190,8 @@ type Settings struct {
 	DefaultRegion string `json:"defaultRegion,omitempty"` // e.g., "na1", "euw1"
 }
 
-// DefaultGameNetworks returns pre-populated game networks
+// DefaultGameNetworks returns pre-populated game networks with platform-specific process names
+// Only native ports are defined - empty means game doesn't exist on that platform
 func DefaultGameNetworks() []GameNetwork {
 	return []GameNetwork{
 		{
@@ -153,25 +199,52 @@ func DefaultGameNetworks() []GameNetwork {
 			Name: "Riot Games",
 			Games: []Game{
 				{
-					ID:            "lol",
-					Name:          "League of Legends",
-					NetworkID:     "riot",
-					ClientProcess: "RiotClientUx.exe",
-					ClientTitle:   "Riot Client",
+					ID:        "lol",
+					Name:      "League of Legends",
+					NetworkID: "riot",
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"LeagueClient.exe"},
+						MacOS:   []string{"LeagueClient"},
+						// Linux: no native client
+					},
+					ClientTitle: "League of Legends",
+					GameProcesses: PlatformProcesses{
+						Windows: []string{"League of Legends.exe"},
+						MacOS:   []string{"League of Legends"},
+						// Linux: no native client
+					},
 				},
 				{
-					ID:            "valorant",
-					Name:          "Valorant",
-					NetworkID:     "riot",
-					ClientProcess: "RiotClientUx.exe",
-					ClientTitle:   "Riot Client",
+					ID:        "valorant",
+					Name:      "Valorant",
+					NetworkID: "riot",
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"RiotClientUx.exe"},
+						// MacOS: no native client (Vanguard anti-cheat)
+						// Linux: no native client (Vanguard anti-cheat)
+					},
+					ClientTitle: "Riot Client",
+					GameProcesses: PlatformProcesses{
+						Windows: []string{"VALORANT-Win64-Shipping.exe"},
+						// MacOS: no native client
+						// Linux: no native client
+					},
 				},
 				{
-					ID:            "tft",
-					Name:          "Teamfight Tactics",
-					NetworkID:     "riot",
-					ClientProcess: "RiotClientUx.exe",
-					ClientTitle:   "Riot Client",
+					ID:        "tft",
+					Name:      "Teamfight Tactics",
+					NetworkID: "riot",
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"LeagueClient.exe"},
+						MacOS:   []string{"LeagueClient"},
+						// Linux: no native client
+					},
+					ClientTitle: "League of Legends",
+					GameProcesses: PlatformProcesses{
+						Windows: []string{"League of Legends.exe"},
+						MacOS:   []string{"League of Legends"},
+						// Linux: no native client
+					},
 				},
 			},
 		},

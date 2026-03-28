@@ -105,7 +105,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
 // General Tab
 function GeneralTab() {
-  const { username } = useAppStore()
+  const { username, settings, updateSettings } = useAppStore()
+  const currentProfile = settings?.pollingProfile || 'balanced'
+
+  const profiles = [
+    { id: 'instant', name: 'Instant', desc: 'Real-time updates (1s), more resources' },
+    { id: 'balanced', name: 'Balanced', desc: 'Good responsiveness (5s), minimal impact' },
+    { id: 'eco', name: 'Eco', desc: 'Minimal resources (15s), slower updates' },
+  ]
+
+  const handleProfileChange = async (profileId: string) => {
+    if (settings) {
+      await updateSettings({ ...settings, pollingProfile: profileId })
+      // Trigger immediate re-poll with new interval
+      useAppStore.getState().pollForActiveAccount()
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -124,10 +139,43 @@ function GeneralTab() {
         </div>
       </div>
 
+      {/* Polling Profile */}
       <div className="pt-4 border-t border-[var(--color-border)]">
-        <p className="text-xs text-[var(--color-muted-foreground)]">
-          More settings coming soon: theme, auto-lock timeout, startup behavior.
+        <label className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
+          Update Speed
+        </label>
+        <p className="text-xs text-[var(--color-muted-foreground)] mt-1 mb-3">
+          Balance between UI responsiveness and system resources
         </p>
+        <div className="space-y-2">
+          {profiles.map((profile) => (
+            <button
+              key={profile.id}
+              onClick={() => handleProfileChange(profile.id)}
+              className={cn(
+                'w-full flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                currentProfile === profile.id
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
+                  : 'border-[var(--color-border)] hover:border-[var(--color-border)]/80'
+              )}
+            >
+              <div className={cn(
+                'w-4 h-4 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                currentProfile === profile.id
+                  ? 'border-[var(--color-primary)]'
+                  : 'border-[var(--color-muted-foreground)]'
+              )}>
+                {currentProfile === profile.id && (
+                  <div className="w-2 h-2 rounded-full bg-[var(--color-primary)]" />
+                )}
+              </div>
+              <div>
+                <p className="font-medium text-[var(--color-foreground)]">{profile.name}</p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">{profile.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )

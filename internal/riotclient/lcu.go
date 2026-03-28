@@ -44,7 +44,7 @@ func NewLCUClient() (*LCUClient, error) {
 		authToken:    base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
 		lockfilePath: lockfile.Path,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 2 * time.Second, // Fast timeout - client should respond quickly or fail
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true, // LCU uses self-signed cert
@@ -126,7 +126,7 @@ func NewLeagueLCUClient() (*LCUClient, error) {
 		authToken:    base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
 		lockfilePath: lockfile.Path,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 2 * time.Second, // Fast timeout - client should respond quickly or fail
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
