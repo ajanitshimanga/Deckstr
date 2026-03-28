@@ -21,10 +21,12 @@ import {
   HelpCircle,
   Download,
   Check,
-  X
+  X,
+  Shield
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { models } from '../../wailsjs/go/models'
+import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 
 // Rank tier ordering for sorting (higher = better)
 const TIER_ORDER: Record<string, number> = {
@@ -90,6 +92,7 @@ export function AccountList() {
     riotClientRunning,
     error,
     passwordHint,
+    hasRecoveryPhrase,
     settings,
     appVersion,
     isCheckingForUpdates,
@@ -104,6 +107,7 @@ export function AccountList() {
     loadAccounts,
     changePassword,
     updatePasswordHint,
+    generateRecoveryPhrase,
     updateSettings,
     checkForUpdates,
     clearError,
@@ -121,6 +125,7 @@ export function AccountList() {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
   const [showPasswordChange, setShowPasswordChange] = useState(false)
   const [showHintUpdate, setShowHintUpdate] = useState(false)
+  const [showPinRegenConfirm, setShowPinRegenConfirm] = useState(false)
 
   // Filter by game then sort accounts
   const accounts = useMemo(() => {
@@ -283,6 +288,16 @@ export function AccountList() {
                   >
                     <HelpCircle className="w-4 h-4" />
                     Update Password Hint
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSettingsMenu(false)
+                      setShowPinRegenConfirm(true)
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50 flex items-center gap-2 transition-colors"
+                  >
+                    <Shield className="w-4 h-4" />
+                    {hasRecoveryPhrase ? 'Regenerate PIN' : 'Generate Recovery PIN'}
                   </button>
                   <div className="border-t border-[var(--color-border)]" />
                   {/* Auto-update toggle */}
@@ -763,6 +778,14 @@ export function AccountList() {
       {showHintUpdate && (
         <HintUpdateModal onClose={() => setShowHintUpdate(false)} />
       )}
+
+      {/* PIN Regeneration Confirmation Modal */}
+      {showPinRegenConfirm && (
+        <PinRegenConfirmModal onClose={() => setShowPinRegenConfirm(false)} />
+      )}
+
+      {/* Recovery Phrase Modal - shown after password change or generating for legacy users */}
+      <RecoveryPhraseModal />
     </div>
   )
 }
@@ -1168,7 +1191,7 @@ function PasswordChangeModal({ onClose }: { onClose: () => void }) {
               Password Changed!
             </h3>
             <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
-              Your password has been updated successfully
+              A new recovery phrase will be shown next
             </p>
           </div>
         ) : (
@@ -1285,6 +1308,122 @@ function PasswordChangeModal({ onClose }: { onClose: () => void }) {
             </div>
           </form>
         )}
+      </div>
+    </div>
+  )
+}
+
+// PIN Regeneration Confirmation Modal - requires password verification
+function PinRegenConfirmModal({ onClose }: { onClose: () => void }) {
+  const { regenerateRecoveryPhrase, clearError, error, hasRecoveryPhrase } = useAppStore()
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (password.length < 6) return
+
+    clearError()
+    setLoading(true)
+    const result = await regenerateRecoveryPhrase(password)
+    setLoading(false)
+
+    if (result) {
+      onClose()
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
+      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl">
+        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] flex items-center justify-between">
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+              {hasRecoveryPhrase ? 'Regenerate Recovery PIN' : 'Generate Recovery PIN'}
+            </h2>
+            <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-0.5">
+              Enter your password to continue
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-4">
+          {/* Warning */}
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
+            <Shield className="w-5 h-5 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium text-[var(--color-foreground)]">Security Notice</p>
+              <p className="text-[var(--color-muted-foreground)] mt-1">
+                {hasRecoveryPhrase
+                  ? 'This will invalidate your current recovery PIN and generate a new one.'
+                  : 'Your recovery PIN is a master key that can reset your password.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 sm:space-y-2">
+            <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+              Current Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className={cn(
+                  'w-full pl-10 pr-10 py-2 rounded-lg sm:rounded-xl text-sm',
+                  'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                  'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                  'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                )}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="p-3 rounded-lg bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/20">
+              <p className="text-xs sm:text-sm text-[var(--color-destructive)]">{error}</p>
+            </div>
+          )}
+
+          <div className="flex gap-2 sm:gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={password.length < 6 || loading}
+              className={cn(
+                'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
+                'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
+                'disabled:opacity-50 disabled:cursor-not-allowed'
+              )}
+            >
+              {loading ? 'Verifying...' : (hasRecoveryPhrase ? 'Regenerate PIN' : 'Generate PIN')}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )

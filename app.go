@@ -63,8 +63,15 @@ func (a *App) CreateVault(username, masterPassword string) error {
 }
 
 // CreateVaultWithHint creates a new vault with username, master password, and optional hint
+// DEPRECATED: Use CreateVaultWithRecoveryPhrase instead
 func (a *App) CreateVaultWithHint(username, masterPassword, hint string) error {
 	return a.storage.CreateVaultWithHint(username, masterPassword, hint)
+}
+
+// CreateVaultWithRecoveryPhrase creates a new vault and returns the recovery phrase
+// The recovery phrase should be shown to the user (hidden by default) for safekeeping
+func (a *App) CreateVaultWithRecoveryPhrase(username, masterPassword, hint string) (string, error) {
+	return a.storage.CreateVaultWithRecoveryPhrase(username, masterPassword, hint)
 }
 
 // Unlock decrypts the vault with username and master password
@@ -77,8 +84,31 @@ func (a *App) GetPasswordHint() (string, error) {
 	return a.storage.GetPasswordHint()
 }
 
+// HasRecoveryPhrase checks if the vault has a recovery phrase set
+func (a *App) HasRecoveryPhrase() (bool, error) {
+	return a.storage.HasRecoveryPhrase()
+}
+
+// GenerateRecoveryPhraseForLegacyUser generates a recovery phrase for existing users without one
+// Must be called while vault is unlocked. Returns the new recovery phrase.
+func (a *App) GenerateRecoveryPhraseForLegacyUser() (string, error) {
+	return a.storage.GenerateRecoveryPhraseForLegacyUser()
+}
+
+// RegenerateRecoveryPhrase verifies password and generates a new recovery phrase
+func (a *App) RegenerateRecoveryPhrase(password string) (string, error) {
+	return a.storage.RegenerateRecoveryPhrase(password)
+}
+
+// ResetPasswordWithRecoveryPhrase resets the password using the 6-word recovery phrase
+// Returns a NEW recovery phrase (old one is invalidated after use)
+func (a *App) ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPassword, newHint string) (string, error) {
+	return a.storage.ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPassword, newHint)
+}
+
 // ChangePassword changes the master password (must be unlocked, must provide correct current password)
-func (a *App) ChangePassword(currentPassword, newPassword string) error {
+// Returns a NEW recovery phrase (old one is invalidated)
+func (a *App) ChangePassword(currentPassword, newPassword string) (string, error) {
 	return a.storage.ChangePassword(currentPassword, newPassword)
 }
 

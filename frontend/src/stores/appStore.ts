@@ -6,6 +6,7 @@ import {
   IsUnlocked,
   CreateVault,
   CreateVaultWithHint,
+  CreateVaultWithRecoveryPhrase,
   Unlock,
   Lock,
   GetAllAccounts,
@@ -19,9 +20,13 @@ import {
   GetUsername,
   GetStoredUsername,
   GetPasswordHint,
+  HasRecoveryPhrase,
   ChangePassword,
   UpdatePasswordHint,
   UpdateSettings,
+  GenerateRecoveryPhraseForLegacyUser,
+  RegenerateRecoveryPhrase,
+  ResetPasswordWithRecoveryPhrase,
   DetectSignedInAccount,
   MatchAndUpdateAccount,
   IsRiotClientRunning,
@@ -43,6 +48,12 @@ interface AppStore {
   username: string
   storedUsername: string // Pre-filled from vault for login
   passwordHint: string // Password hint displayed on lock screen
+  hasRecoveryPhrase: boolean // Whether vault has recovery phrase set
+
+  // Recovery phrase state (shown after creation/change)
+  pendingRecoveryPhrase: string | null
+  showRecoveryPhraseModal: boolean
+  requiresPinSetup: boolean // Forces user to reveal PIN before continuing
 
   // Data
   accounts: models.Account[]
@@ -78,6 +89,10 @@ interface AppStore {
   lock: () => void
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
   updatePasswordHint: (hint: string) => Promise<boolean>
+  generateRecoveryPhrase: () => Promise<string | null>
+  regenerateRecoveryPhrase: (password: string) => Promise<boolean>
+  resetPasswordWithRecoveryPhrase: (recoveryPhrase: string, newPassword: string, newHint: string) => Promise<boolean>
+  dismissRecoveryPhraseModal: () => void
   clearError: () => void
 
   // Account actions
@@ -120,6 +135,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   username: '',
   storedUsername: '',
   passwordHint: '',
+  hasRecoveryPhrase: false,
+  pendingRecoveryPhrase: null,
+  showRecoveryPhraseModal: false,
+  requiresPinSetup: false,
   accounts: [],
   gameNetworks: [],
   tags: [],
@@ -166,13 +185,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         // Start polling for active account
         get().startPolling()
       } else if (exists) {
-        // Get stored username and password hint for login form
+        // Get stored username, password hint, and recovery phrase status for login form
         try {
-          const [storedUsername, passwordHint] = await Promise.all([
+          const [storedUsername, passwordHint, hasRecovery] = await Promise.all([
             GetStoredUsername(),
             GetPasswordHint(),
+            HasRecoveryPhrase(),
           ])
-          set({ appState: 'locked', storedUsername, passwordHint: passwordHint || '' })
+          set({ appState: 'locked', storedUsername, passwordHint: passwordHint || '', hasRecoveryPhrase: hasRecovery })
         } catch {
           set({ appState: 'locked' })
         }
@@ -184,14 +204,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  // Create new vault
+  // Create new vault with recovery phrase
   createVault: async (username: string, password: string, hint?: string) => {
     try {
-      if (hint) {
-        await CreateVaultWithHint(username, password, hint)
-      } else {
-        await CreateVault(username, password)
-      }
+      // Always use the new recovery phrase method
+      const recoveryPhrase = await CreateVaultWithRecoveryPhrase(username, password, hint || '')
+
       const [accounts, networks, tags, settings] = await Promise.all([
         GetAllAccounts(),
         GetGameNetworks(),
@@ -205,6 +223,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         gameNetworks: networks || [],
         tags: tags || [],
         settings,
+        hasRecoveryPhrase: true,
+        pendingRecoveryPhrase: recoveryPhrase,
+        showRecoveryPhraseModal: true,
+        requiresPinSetup: true, // Force user to reveal PIN before continuing
         error: null,
       })
       // Resize to main window size
@@ -241,6 +263,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       SetWindowSizeMain()
       // Start polling for active account
       get().startPolling()
+
+      // Check if legacy user needs recovery phrase
+      const hasRecovery = await HasRecoveryPhrase()
+      if (!hasRecovery) {
+        // Generate recovery phrase for legacy user
+        const recoveryPhrase = await GenerateRecoveryPhraseForLegacyUser()
+        set({
+          hasRecoveryPhrase: true,
+          pendingRecoveryPhrase: recoveryPhrase,
+          showRecoveryPhraseModal: true,
+          requiresPinSetup: true, // Force user to reveal PIN before continuing
+        })
+      }
+
       return true
     } catch (e) {
       set({ error: 'Invalid username or password' })
@@ -269,11 +305,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     SetWindowSizeLogin()
   },
 
-  // Change password
+  // Change password (returns new recovery phrase)
   changePassword: async (currentPassword: string, newPassword: string) => {
     try {
-      await ChangePassword(currentPassword, newPassword)
-      set({ error: null })
+      const newRecoveryPhrase = await ChangePassword(currentPassword, newPassword)
+      set({
+        error: null,
+        hasRecoveryPhrase: true,
+        pendingRecoveryPhrase: newRecoveryPhrase,
+        showRecoveryPhraseModal: true,
+      })
       return true
     } catch (e) {
       set({ error: String(e) })
@@ -294,6 +335,88 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  // Generate recovery phrase for legacy users (must be unlocked)
+  generateRecoveryPhrase: async () => {
+    try {
+      const recoveryPhrase = await GenerateRecoveryPhraseForLegacyUser()
+      set({
+        hasRecoveryPhrase: true,
+        pendingRecoveryPhrase: recoveryPhrase,
+        showRecoveryPhraseModal: true,
+        error: null,
+      })
+      return recoveryPhrase
+    } catch (e) {
+      set({ error: String(e) })
+      return null
+    }
+  },
+
+  // Regenerate recovery phrase with password verification
+  regenerateRecoveryPhrase: async (password: string) => {
+    try {
+      const recoveryPhrase = await RegenerateRecoveryPhrase(password)
+      set({
+        hasRecoveryPhrase: true,
+        pendingRecoveryPhrase: recoveryPhrase,
+        showRecoveryPhraseModal: true,
+        error: null,
+      })
+      return true
+    } catch (e) {
+      set({ error: String(e) })
+      return false
+    }
+  },
+
+  // Reset password using recovery phrase
+  resetPasswordWithRecoveryPhrase: async (recoveryPhrase: string, newPassword: string, newHint: string) => {
+    try {
+      const newRecoveryPhrase = await ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPassword, newHint)
+
+      // Vault is now unlocked, load data
+      const [accounts, networks, tags, settings, username] = await Promise.all([
+        GetAllAccounts(),
+        GetGameNetworks(),
+        GetAllTags(),
+        GetSettings(),
+        GetUsername(),
+      ])
+
+      set({
+        appState: 'unlocked',
+        username,
+        accounts: accounts || [],
+        gameNetworks: networks || [],
+        tags: tags || [],
+        settings,
+        hasRecoveryPhrase: true,
+        pendingRecoveryPhrase: newRecoveryPhrase,
+        showRecoveryPhraseModal: true,
+        error: null,
+      })
+
+      // Resize to main window size
+      SetWindowSizeMain()
+      // Start polling for active account
+      get().startPolling()
+
+      return true
+    } catch (e) {
+      set({ error: String(e) })
+      return false
+    }
+  },
+
+  // Dismiss recovery phrase modal (user acknowledged they saved it)
+  dismissRecoveryPhraseModal: () => {
+    set({
+      showRecoveryPhraseModal: false,
+      pendingRecoveryPhrase: null,
+      requiresPinSetup: false, // User completed PIN setup
+    })
+  },
 
   // Load accounts
   loadAccounts: async () => {

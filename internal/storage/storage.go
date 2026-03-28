@@ -343,12 +343,13 @@ func (s *StorageService) Save() error {
 
 // ChangePassword re-encrypts the vault with a new password
 // The user must be unlocked and provide the correct current password
-func (s *StorageService) ChangePassword(currentPassword, newPassword string) error {
+// Returns a new recovery phrase (old one is invalidated)
+func (s *StorageService) ChangePassword(currentPassword, newPassword string) (newRecoveryPhrase string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.isUnlocked {
-		return ErrVaultLocked
+		return "", ErrVaultLocked
 	}
 
 	// Verify current password by attempting to derive key and compare
@@ -358,23 +359,23 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) err
 
 	// Compare with stored derived key
 	if len(testKey) != len(s.derivedKey) {
-		return ErrInvalidPassword
+		return "", ErrInvalidPassword
 	}
 	for i := range testKey {
 		if testKey[i] != s.derivedKey[i] {
-			return ErrInvalidPassword
+			return "", ErrInvalidPassword
 		}
 	}
 
 	// Generate new salt and nonce for the new password
 	newSalt, err := s.crypto.GenerateSalt()
 	if err != nil {
-		return fmt.Errorf("failed to generate new salt: %w", err)
+		return "", fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
 	newNonce, err := s.crypto.GenerateNonce()
 	if err != nil {
-		return fmt.Errorf("failed to generate new nonce: %w", err)
+		return "", fmt.Errorf("failed to generate new nonce: %w", err)
 	}
 
 	// Derive new key from new password
@@ -383,30 +384,64 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) err
 	// Serialize vault data
 	plaintext, err := json.Marshal(s.vaultData)
 	if err != nil {
-		return fmt.Errorf("failed to serialize vault data: %w", err)
+		return "", fmt.Errorf("failed to serialize vault data: %w", err)
 	}
 
 	// Encrypt with new key
 	ciphertext, err := s.crypto.Encrypt(plaintext, newKey, newNonce)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt vault: %w", err)
+		return "", fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Generate NEW recovery phrase (old one is invalidated)
+	newRecoveryPhrase, err = s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery phrase: %w", err)
+	}
+
+	// Generate salt for the new recovery phrase
+	newRecoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
+	}
+
+	// Hash the new recovery phrase
+	newRecoveryHash := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+
+	// Derive key from new recovery phrase
+	newRecoveryKey := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+
+	// Generate nonce for encrypting the vault key
+	newRecoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
+	}
+
+	// Encrypt the new vault key with the new recovery-derived key
+	newEncryptedVaultKey, err := s.crypto.Encrypt(newKey, newRecoveryKey, newRecoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
 	}
 
 	// Create new vault structure
 	vault := models.Vault{
-		Version:       vaultVersion,
-		Username:      s.username,
-		PasswordHint:  s.passwordHint,
-		Salt:          crypto.EncodeBase64(newSalt),
-		Nonce:         crypto.EncodeBase64(newNonce),
-		EncryptedData: crypto.EncodeBase64(ciphertext),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		Version:            vaultVersion,
+		Username:           s.username,
+		PasswordHint:       s.passwordHint,
+		Salt:               crypto.EncodeBase64(newSalt),
+		Nonce:              crypto.EncodeBase64(newNonce),
+		EncryptedData:      crypto.EncodeBase64(ciphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(newRecoveryHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(newRecoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(newRecoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(newEncryptedVaultKey),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	// Save to file
 	if err := s.saveVaultFile(vault); err != nil {
-		return err
+		return "", err
 	}
 
 	// Clear old key and update state
@@ -414,7 +449,7 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) err
 	s.derivedKey = newKey
 	s.salt = newSalt
 
-	return nil
+	return newRecoveryPhrase, nil
 }
 
 // GetVaultData returns a copy of the current vault data
@@ -507,4 +542,467 @@ func (s *StorageService) saveVaultFile(vault models.Vault) error {
 // GetVaultPath returns the path to the vault file (for debugging/info)
 func (s *StorageService) GetVaultPath() string {
 	return s.vaultPath
+}
+
+// HasRecoveryPhrase checks if the vault has a recovery phrase set (without unlocking)
+func (s *StorageService) HasRecoveryPhrase() (bool, error) {
+	if !s.VaultExists() {
+		return false, ErrVaultNotFound
+	}
+	vault, err := s.loadVaultFile()
+	if err != nil {
+		return false, err
+	}
+	return vault.RecoveryPhraseHash != "" && vault.RecoveryPhraseSalt != "", nil
+}
+
+// CreateVaultWithRecoveryPhrase creates a new vault and returns the recovery phrase
+// The phrase should be shown to the user once (hidden by default) and stored securely
+func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword, hint string) (recoveryPhrase string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.VaultExists() {
+		return "", ErrVaultExists
+	}
+
+	// Generate recovery phrase
+	recoveryPhrase, err = s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery phrase: %w", err)
+	}
+
+	// Generate salt for recovery phrase hash
+	recoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
+	}
+
+	// Hash the recovery phrase (for verification)
+	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Derive key from recovery phrase (for encrypting the vault key)
+	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Initialize with default data
+	vaultData := models.NewVaultData()
+
+	// Serialize vault data
+	plaintext, err := json.Marshal(vaultData)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize vault data: %w", err)
+	}
+
+	// Encrypt vault data with password-derived key
+	salt, nonce, ciphertext, err := s.crypto.EncryptWithPassword(plaintext, masterPassword)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Derive the vault key (we need to store this encrypted with recovery key)
+	vaultKey := s.crypto.DeriveKey(masterPassword, salt)
+
+	// Generate nonce for encrypting the vault key
+	recoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
+	}
+
+	// Encrypt the vault key with the recovery-derived key
+	encryptedVaultKey, err := s.crypto.Encrypt(vaultKey, recoveryKey, recoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
+	}
+
+	// Create vault structure with recovery phrase
+	vault := models.Vault{
+		Version:            vaultVersion,
+		Username:           username,
+		PasswordHint:       hint,
+		Salt:               crypto.EncodeBase64(salt),
+		Nonce:              crypto.EncodeBase64(nonce),
+		EncryptedData:      crypto.EncodeBase64(ciphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(recoveryHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	// Save to file
+	if err := s.saveVaultFile(vault); err != nil {
+		return "", err
+	}
+
+	// Keep vault unlocked after creation
+	s.isUnlocked = true
+	s.username = username
+	s.passwordHint = hint
+	s.derivedKey = vaultKey
+	s.salt = salt
+	s.vaultData = &vaultData
+
+	return recoveryPhrase, nil
+}
+
+// GenerateRecoveryPhraseForLegacyUser generates a recovery phrase for an existing user without one
+// Must be called while the vault is unlocked. Returns the new recovery phrase.
+func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isUnlocked {
+		return "", ErrVaultLocked
+	}
+
+	// Generate recovery phrase
+	recoveryPhrase, err := s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery phrase: %w", err)
+	}
+
+	// Generate salt for recovery phrase hash
+	recoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
+	}
+
+	// Hash the recovery phrase (for verification)
+	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Derive key from recovery phrase (for encrypting the vault key)
+	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Generate nonce for encrypting the vault key
+	recoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
+	}
+
+	// Encrypt the current vault key with the recovery-derived key
+	encryptedVaultKey, err := s.crypto.Encrypt(s.derivedKey, recoveryKey, recoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
+	}
+
+	// Generate new nonce for the vault data save
+	nonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", err
+	}
+
+	// Serialize vault data
+	plaintext, err := json.Marshal(s.vaultData)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize vault data: %w", err)
+	}
+
+	// Encrypt with existing derived key
+	ciphertext, err := s.crypto.Encrypt(plaintext, s.derivedKey, nonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Update vault structure with recovery phrase
+	vault := models.Vault{
+		Version:            vaultVersion,
+		Username:           s.username,
+		PasswordHint:       s.passwordHint,
+		Salt:               crypto.EncodeBase64(s.salt),
+		Nonce:              crypto.EncodeBase64(nonce),
+		EncryptedData:      crypto.EncodeBase64(ciphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(recoveryHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	if err := s.saveVaultFile(vault); err != nil {
+		return "", err
+	}
+
+	return recoveryPhrase, nil
+}
+
+// RegenerateRecoveryPhrase verifies the password and generates a new recovery phrase
+// This requires password verification as a security measure since the recovery phrase
+// is a master key backup that can reset the vault password
+func (s *StorageService) RegenerateRecoveryPhrase(password string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isUnlocked {
+		return "", ErrVaultLocked
+	}
+
+	// Verify the password by attempting to decrypt
+	vault, err := s.loadVaultFile()
+	if err != nil {
+		return "", err
+	}
+
+	salt, err := crypto.DecodeBase64(vault.Salt)
+	if err != nil {
+		return "", fmt.Errorf("invalid salt: %w", err)
+	}
+
+	nonce, err := crypto.DecodeBase64(vault.Nonce)
+	if err != nil {
+		return "", fmt.Errorf("invalid nonce: %w", err)
+	}
+
+	ciphertext, err := crypto.DecodeBase64(vault.EncryptedData)
+	if err != nil {
+		return "", fmt.Errorf("invalid encrypted data: %w", err)
+	}
+
+	// Verify password by attempting decryption
+	_, err = s.crypto.DecryptWithPassword(ciphertext, password, salt, nonce)
+	if err != nil {
+		if errors.Is(err, crypto.ErrDecryptionFailed) {
+			return "", ErrInvalidPassword
+		}
+		return "", err
+	}
+
+	// Password verified, now generate new recovery phrase
+	recoveryPhrase, err := s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery phrase: %w", err)
+	}
+
+	// Generate salt for recovery phrase hash
+	recoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
+	}
+
+	// Hash the recovery phrase (for verification)
+	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Derive key from recovery phrase (for encrypting the vault key)
+	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Generate nonce for encrypting the vault key
+	recoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
+	}
+
+	// Encrypt the current vault key with the recovery-derived key
+	encryptedVaultKey, err := s.crypto.Encrypt(s.derivedKey, recoveryKey, recoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
+	}
+
+	// Generate new nonce for the vault data save
+	newNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", err
+	}
+
+	// Serialize vault data
+	plaintext, err := json.Marshal(s.vaultData)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize vault data: %w", err)
+	}
+
+	// Encrypt with existing derived key
+	newCiphertext, err := s.crypto.Encrypt(plaintext, s.derivedKey, newNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Update vault structure with new recovery phrase
+	updatedVault := models.Vault{
+		Version:            vaultVersion,
+		Username:           s.username,
+		PasswordHint:       s.passwordHint,
+		Salt:               crypto.EncodeBase64(s.salt),
+		Nonce:              crypto.EncodeBase64(newNonce),
+		EncryptedData:      crypto.EncodeBase64(newCiphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(recoveryHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
+		CreatedAt:          vault.CreatedAt,
+		UpdatedAt:          time.Now(),
+	}
+
+	if err := s.saveVaultFile(updatedVault); err != nil {
+		return "", err
+	}
+
+	return recoveryPhrase, nil
+}
+
+// ResetPasswordWithRecoveryPhrase resets the password using the recovery phrase
+// This validates the phrase, re-encrypts with a new password, and generates a new recovery phrase
+// Returns the new recovery phrase
+func (s *StorageService) ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPassword, newHint string) (newRecoveryPhrase string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.VaultExists() {
+		return "", ErrVaultNotFound
+	}
+
+	// Load vault file
+	vault, err := s.loadVaultFile()
+	if err != nil {
+		return "", err
+	}
+
+	// Check if recovery phrase is set
+	if vault.RecoveryPhraseHash == "" || vault.RecoveryPhraseSalt == "" || vault.EncryptedVaultKey == "" {
+		return "", errors.New("no recovery phrase set for this vault")
+	}
+
+	// Decode recovery phrase salt
+	recoverySalt, err := crypto.DecodeBase64(vault.RecoveryPhraseSalt)
+	if err != nil {
+		return "", fmt.Errorf("invalid recovery salt: %w", err)
+	}
+
+	// Decode stored hash for verification
+	storedHash, err := crypto.DecodeBase64(vault.RecoveryPhraseHash)
+	if err != nil {
+		return "", fmt.Errorf("invalid recovery hash: %w", err)
+	}
+
+	// Verify recovery phrase
+	if !s.crypto.VerifyRecoveryPhrase(recoveryPhrase, recoverySalt, storedHash) {
+		return "", errors.New("invalid recovery phrase")
+	}
+
+	// Derive key from recovery phrase to decrypt the vault key
+	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+
+	// Decode encrypted vault key and its nonce
+	encryptedVaultKey, err := crypto.DecodeBase64(vault.EncryptedVaultKey)
+	if err != nil {
+		return "", fmt.Errorf("invalid encrypted vault key: %w", err)
+	}
+
+	recoveryKeyNonce, err := crypto.DecodeBase64(vault.RecoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("invalid recovery key nonce: %w", err)
+	}
+
+	// Decrypt the vault key using the recovery-derived key
+	vaultKey, err := s.crypto.Decrypt(encryptedVaultKey, recoveryKey, recoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt vault key: %w", err)
+	}
+
+	// Now decrypt the vault data using the recovered vault key
+	nonce, err := crypto.DecodeBase64(vault.Nonce)
+	if err != nil {
+		return "", fmt.Errorf("invalid nonce: %w", err)
+	}
+
+	ciphertext, err := crypto.DecodeBase64(vault.EncryptedData)
+	if err != nil {
+		return "", fmt.Errorf("invalid encrypted data: %w", err)
+	}
+
+	plaintext, err := s.crypto.Decrypt(ciphertext, vaultKey, nonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt vault data: %w", err)
+	}
+
+	// Deserialize vault data
+	var vaultData models.VaultData
+	if err := json.Unmarshal(plaintext, &vaultData); err != nil {
+		return "", fmt.Errorf("failed to deserialize vault data: %w", err)
+	}
+
+	// Clear the old vault key
+	crypto.ClearBytes(vaultKey)
+
+	// Now re-encrypt everything with the new password
+	// Generate new salt for the new password
+	newSalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new salt: %w", err)
+	}
+
+	// Derive new key from new password
+	newVaultKey := s.crypto.DeriveKey(newPassword, newSalt)
+
+	// Generate new nonce for vault data
+	newNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new nonce: %w", err)
+	}
+
+	// Re-encrypt vault data with new key
+	newCiphertext, err := s.crypto.Encrypt(plaintext, newVaultKey, newNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt vault: %w", err)
+	}
+
+	// Generate NEW recovery phrase (old one is invalidated)
+	newRecoveryPhrase, err = s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new recovery phrase: %w", err)
+	}
+
+	// Generate new salt for the new recovery phrase
+	newRecoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new recovery salt: %w", err)
+	}
+
+	// Hash the new recovery phrase
+	newRecoveryHash := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+
+	// Derive key from new recovery phrase
+	newRecoveryKey := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+
+	// Generate nonce for encrypting the new vault key
+	newRecoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new recovery key nonce: %w", err)
+	}
+
+	// Encrypt the new vault key with the new recovery-derived key
+	newEncryptedVaultKey, err := s.crypto.Encrypt(newVaultKey, newRecoveryKey, newRecoveryKeyNonce)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt new vault key: %w", err)
+	}
+
+	// Create new vault structure
+	newVault := models.Vault{
+		Version:            vaultVersion,
+		Username:           vault.Username,
+		PasswordHint:       newHint,
+		Salt:               crypto.EncodeBase64(newSalt),
+		Nonce:              crypto.EncodeBase64(newNonce),
+		EncryptedData:      crypto.EncodeBase64(newCiphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(newRecoveryHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(newRecoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(newRecoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(newEncryptedVaultKey),
+		CreatedAt:          vault.CreatedAt,
+		UpdatedAt:          time.Now(),
+	}
+
+	// Save the new vault
+	if err := s.saveVaultFile(newVault); err != nil {
+		return "", err
+	}
+
+	// Update in-memory state (vault is now unlocked with new password)
+	s.isUnlocked = true
+	s.username = vault.Username
+	s.passwordHint = newHint
+	s.derivedKey = newVaultKey
+	s.salt = newSalt
+	s.vaultData = &vaultData
+
+	return newRecoveryPhrase, nil
 }

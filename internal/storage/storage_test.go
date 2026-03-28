@@ -649,9 +649,12 @@ func TestChangePassword(t *testing.T) {
 	service.Save()
 
 	// Change password
-	err = service.ChangePassword(oldPassword, newPassword)
+	recoveryPhrase, err := service.ChangePassword(oldPassword, newPassword)
 	if err != nil {
 		t.Fatalf("ChangePassword() error = %v", err)
+	}
+	if recoveryPhrase == "" {
+		t.Error("ChangePassword() should return a recovery phrase")
 	}
 
 	// Should still be unlocked after password change
@@ -694,7 +697,7 @@ func TestChangePasswordFailsWithWrongCurrentPassword(t *testing.T) {
 	service.CreateVault("user", correctPassword)
 
 	// Try to change password with wrong current password
-	err = service.ChangePassword(wrongPassword, newPassword)
+	_, err = service.ChangePassword(wrongPassword, newPassword)
 	if err == nil {
 		t.Error("ChangePassword() with wrong current password should fail")
 	}
@@ -726,7 +729,7 @@ func TestChangePasswordFailsWhenLocked(t *testing.T) {
 	service.Lock()
 
 	// Try to change password when locked
-	err = service.ChangePassword(password, "newpassword")
+	_, err = service.ChangePassword(password, "newpassword")
 	if err == nil {
 		t.Error("ChangePassword() when locked should fail")
 	}
@@ -751,7 +754,7 @@ func TestCannotUnlockWithOldPasswordAfterChange(t *testing.T) {
 	newPassword := "newpassword"
 
 	service.CreateVault(username, oldPassword)
-	service.ChangePassword(oldPassword, newPassword)
+	_, _ = service.ChangePassword(oldPassword, newPassword)
 	service.Lock()
 
 	// Old password should NOT work

@@ -110,6 +110,12 @@ type Vault struct {
 	EncryptedData string    `json:"encryptedData"` // Base64 encoded encrypted JSON
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+
+	// Recovery phrase fields (for password reset)
+	RecoveryPhraseHash string `json:"recoveryPhraseHash,omitempty"` // Base64 encoded Argon2id hash
+	RecoveryPhraseSalt string `json:"recoveryPhraseSalt,omitempty"` // Base64 encoded salt for recovery phrase
+	RecoveryKeyNonce   string `json:"recoveryKeyNonce,omitempty"`   // Nonce for encrypted vault key
+	EncryptedVaultKey  string `json:"encryptedVaultKey,omitempty"`  // Vault key encrypted with recovery-derived key
 }
 
 // VaultData represents the decrypted vault contents
