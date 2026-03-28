@@ -9,22 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Run tests
-        run: go test ./... -v
-
   build-windows:
-    needs: test
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -76,8 +61,22 @@ jobs:
           name: OpenSmurfManager-Windows
           path: build/installer/*.exe
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run tests
+        run: go test ./... -v
+
   release:
-    needs: build-windows
+    needs: [build-windows, test]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
