@@ -15,10 +15,11 @@ import (
 
 // LCUClient handles communication with the League Client Update API
 type LCUClient struct {
-	port       string
-	authToken  string
-	httpClient *http.Client
-	connected  bool
+	port         string
+	authToken    string
+	httpClient   *http.Client
+	connected    bool
+	lockfilePath string // Store path for validation
 }
 
 // LockfileData contains parsed lockfile information
@@ -28,18 +29,20 @@ type LockfileData struct {
 	Port        string
 	Password    string
 	Protocol    string
+	Path        string // Path to the lockfile for validation
 }
 
 // NewLCUClient creates a new LCU client by reading the lockfile
 func NewLCUClient() (*LCUClient, error) {
-	lockfile, err := FindAndParseLockfile()
+	lockfile, err := findAndParseLockfileWithPath("riot")
 	if err != nil {
 		return nil, err
 	}
 
 	client := &LCUClient{
-		port:      lockfile.Port,
-		authToken: base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
+		port:         lockfile.Port,
+		authToken:    base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
+		lockfilePath: lockfile.Path,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -113,14 +116,15 @@ func findLockfileByType(clientType string) (*LockfileData, error) {
 
 // NewLeagueLCUClient creates a client specifically for the League of Legends client
 func NewLeagueLCUClient() (*LCUClient, error) {
-	lockfile, err := FindLeagueLockfile()
+	lockfile, err := findAndParseLockfileWithPath("league")
 	if err != nil {
 		return nil, err
 	}
 
 	client := &LCUClient{
-		port:      lockfile.Port,
-		authToken: base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
+		port:         lockfile.Port,
+		authToken:    base64.StdEncoding.EncodeToString([]byte("riot:" + lockfile.Password)),
+		lockfilePath: lockfile.Path,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -152,11 +156,29 @@ func parseLockfile(path string) (*LockfileData, error) {
 		Port:        parts[2],
 		Password:    parts[3],
 		Protocol:    parts[4],
+		Path:        path,
 	}, nil
+}
+
+// findAndParseLockfileWithPath finds and parses lockfile, returning the path
+func findAndParseLockfileWithPath(clientType string) (*LockfileData, error) {
+	return findLockfileByType(clientType)
 }
 
 // IsConnected returns whether the client is connected
 func (c *LCUClient) IsConnected() bool {
+	return c.connected
+}
+
+// IsValid checks if the lockfile still exists (client still running)
+func (c *LCUClient) IsValid() bool {
+	if c.lockfilePath == "" {
+		return c.connected
+	}
+	if _, err := os.Stat(c.lockfilePath); os.IsNotExist(err) {
+		c.connected = false
+		return false
+	}
 	return c.connected
 }
 

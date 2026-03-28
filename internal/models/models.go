@@ -134,6 +134,10 @@ type Settings struct {
 	DarkMode         bool `json:"darkMode"`
 	AutoCheckUpdates bool `json:"autoCheckUpdates"` // Check for updates on startup (default: true)
 
+	// Rank sync settings
+	AutoRankSync       bool `json:"autoRankSync"`       // Auto-sync ranks on account detection (default: true)
+	RankSyncIntervalMs int  `json:"rankSyncIntervalMs"` // Minimum interval between syncs in ms (default: 600000 = 10 min)
+
 	// BYOK: User's own Riot API key (stored encrypted in vault)
 	RiotAPIKey string `json:"riotApiKey,omitempty"`
 
@@ -177,11 +181,13 @@ func DefaultGameNetworks() []GameNetwork {
 // DefaultSettings returns default user settings
 func DefaultSettings() Settings {
 	return Settings{
-		AutoLockTimeout:  5,
-		StartWithSystem:  false,
-		MinimizeToTray:   true,
-		DarkMode:         true,
-		AutoCheckUpdates: true, // Check for updates on startup by default
+		AutoLockTimeout:    5,
+		StartWithSystem:    false,
+		MinimizeToTray:     true,
+		DarkMode:           true,
+		AutoCheckUpdates:   true,   // Check for updates on startup by default
+		AutoRankSync:       true,   // Auto-sync ranks on account detection by default
+		RankSyncIntervalMs: 600000, // 10 minutes between syncs
 	}
 }
 

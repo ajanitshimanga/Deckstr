@@ -7,6 +7,17 @@ import (
 	"OpenSmurfManager/internal/models"
 )
 
+// DetectionError represents an error during account detection
+type DetectionError struct {
+	Code    string // "lockfile_not_found", "client_offline", "summoner_fetch_failed"
+	Message string
+	Retry   bool // Whether the caller should retry
+}
+
+func (e *DetectionError) Error() string {
+	return e.Message
+}
+
 // DetectedAccount represents an account detected via LCU
 type DetectedAccount struct {
 	RiotID        string // e.g., "turkish aimer#doner"
@@ -21,13 +32,17 @@ type DetectedAccount struct {
 
 // DetectAndFetchRanks connects to LCU, detects the signed-in account, and fetches ranks
 func DetectAndFetchRanks() (*DetectedAccount, error) {
-	// Try to connect to League client
+	// Try to connect to League client first
 	lcu, err := NewLeagueLCUClient()
 	if err != nil {
 		// Try Riot Client instead
 		lcu, err = NewLCUClient()
 		if err != nil {
-			return nil, err
+			return nil, &DetectionError{
+				Code:    "client_offline",
+				Message: "No Riot client running",
+				Retry:   true,
+			}
 		}
 	}
 
@@ -37,7 +52,11 @@ func DetectAndFetchRanks() (*DetectedAccount, error) {
 		// Fall back to Riot Client auth for just the Riot ID
 		auth, err := lcu.GetRiotClientAuth()
 		if err != nil {
-			return nil, err
+			return nil, &DetectionError{
+				Code:    "summoner_fetch_failed",
+				Message: "Could not get account info",
+				Retry:   true,
+			}
 		}
 		return &DetectedAccount{
 			RiotID:     auth.GameName + "#" + auth.TagLine,
@@ -66,7 +85,7 @@ func DetectAndFetchRanks() (*DetectedAccount, error) {
 
 	now := time.Now()
 
-	// Get League ranks
+	// Get League ranks (silent on failure - not all accounts have ranked data)
 	if allRanks, err := leagueClient.GetAllRanks(); err == nil {
 		for queueType, rank := range allRanks {
 			detected.Ranks = append(detected.Ranks, models.CachedRank{
@@ -84,7 +103,7 @@ func DetectAndFetchRanks() (*DetectedAccount, error) {
 		}
 	}
 
-	// Get TFT ranks
+	// Get TFT ranks (silent on failure - not all accounts have TFT data)
 	if tftRanks, err := tftClient.GetAllTFTRanks(); err == nil {
 		for queueType, rank := range tftRanks {
 			detected.Ranks = append(detected.Ranks, models.CachedRank{

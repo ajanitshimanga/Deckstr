@@ -67,6 +67,10 @@ interface AppStore {
   riotClientRunning: boolean
   activeAccountId: string | null // Currently signed-in account ID
   isPolling: boolean
+  // Polling reliability state
+  _pollInProgress: boolean // Mutex to prevent overlapping polls
+  pollingFailures: number // Consecutive failures for backoff
+  pollingBackoffMs: number // Current backoff interval
 
   // Filters
   searchQuery: string
@@ -75,6 +79,11 @@ interface AppStore {
 
   // Selected account for editing
   selectedAccountId: string | null
+
+  // Rank sync state
+  lastRankSyncTime: number | null // Unix timestamp of last sync
+  pendingRankSync: boolean // Sync is queued
+  rankSyncError: string | null
 
   // Update state
   appVersion: string
@@ -116,6 +125,11 @@ interface AppStore {
   pollForActiveAccount: () => Promise<void>
   startPolling: () => void
   stopPolling: () => void
+  // Rank sync actions
+  scheduleRankSync: () => void
+  executeRankSync: () => Promise<void>
+  startPeriodicRankSync: () => void
+  stopPeriodicRankSync: () => void
 
   // Update actions
   checkForUpdates: () => Promise<void>
@@ -148,6 +162,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   riotClientRunning: false,
   activeAccountId: null,
   isPolling: false,
+  _pollInProgress: false,
+  pollingFailures: 0,
+  pollingBackoffMs: 10000, // Start at 10 seconds
+  lastRankSyncTime: null,
+  pendingRankSync: false,
+  rankSyncError: null,
   searchQuery: '',
   selectedNetworkId: null,
   selectedTag: null,
@@ -527,56 +547,169 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // Lightweight polling - just checks who's signed in without updating ranks
   pollForActiveAccount: async () => {
+    // Mutex: prevent overlapping poll requests
+    if (get()._pollInProgress) return
+    set({ _pollInProgress: true })
+
     try {
       const detected = await DetectSignedInAccount()
 
       // Check if we got a valid detection (has RiotID)
       if (!detected || !detected.RiotID) {
-        set({ detectedAccount: null, activeAccountId: null, riotClientRunning: false })
+        set({
+          detectedAccount: null,
+          activeAccountId: null,
+          riotClientRunning: false,
+          _pollInProgress: false,
+          // Reset backoff on empty detection (client not running is expected)
+          pollingFailures: 0,
+          pollingBackoffMs: 10000,
+        })
         return
       }
 
       set({ detectedAccount: detected, riotClientRunning: true })
 
       // Match to existing account without updating ranks (lightweight)
-      const { accounts } = get()
+      const { accounts, activeAccountId: previousActiveId, settings, lastRankSyncTime } = get()
       const riotIdLower = detected.RiotID.toLowerCase()
       const matched = accounts.find(acc =>
         acc.riotId?.toLowerCase() === riotIdLower ||
         acc.puuid === detected.PUUID
       )
 
-      set({ activeAccountId: matched?.id || null })
+      const newActiveId = matched?.id || null
+
+      // Check if this is a NEW account detection (different from previous)
+      const isNewAccount = newActiveId && newActiveId !== previousActiveId
+
+      set({
+        activeAccountId: newActiveId,
+        _pollInProgress: false,
+        // Reset backoff on success
+        pollingFailures: 0,
+        pollingBackoffMs: 10000,
+      })
+
+      // Trigger rank sync on new account detection (if auto-sync enabled and cooldown passed)
+      if (isNewAccount && settings?.autoRankSync !== false) {
+        const cooldown = settings?.rankSyncIntervalMs || 600000
+        const now = Date.now()
+        if (now - (lastRankSyncTime || 0) >= cooldown) {
+          get().scheduleRankSync()
+        }
+      }
     } catch {
-      // Client closed or error - clear the active state
-      set({ detectedAccount: null, riotClientRunning: false, activeAccountId: null })
+      // Client closed or error - apply exponential backoff
+      const failures = get().pollingFailures + 1
+      // Backoff: 10s, 15s, 22s, 33s... max 5 minutes
+      const backoff = Math.min(10000 * Math.pow(1.5, failures), 300000)
+
+      set({
+        detectedAccount: null,
+        riotClientRunning: false,
+        activeAccountId: null,
+        _pollInProgress: false,
+        pollingFailures: failures,
+        pollingBackoffMs: backoff,
+      })
     }
   },
 
   startPolling: () => {
     if (get().isPolling) return
-    set({ isPolling: true })
+    set({ isPolling: true, pollingFailures: 0, pollingBackoffMs: 10000 })
 
-    // Initial poll
+    // Schedule next poll with dynamic backoff
+    const schedulePoll = () => {
+      const timeoutId = setTimeout(async () => {
+        if (!get().isPolling) return
+
+        await get().pollForActiveAccount()
+
+        // Schedule next poll with current backoff value
+        if (get().isPolling) {
+          schedulePoll()
+        }
+      }, get().pollingBackoffMs)
+
+      // Store timeout ID for cleanup
+      ;(window as any).__pollingTimeoutId = timeoutId
+    }
+
+    // Initial poll immediately
     get().pollForActiveAccount()
+    // Then schedule subsequent polls
+    schedulePoll()
 
-    // Poll every 10 seconds
-    const intervalId = setInterval(() => {
-      if (get().isPolling) {
-        get().pollForActiveAccount()
-      }
-    }, 10000)
-
-    // Store interval ID for cleanup (using window)
-    ;(window as any).__pollingIntervalId = intervalId
+    // Also start periodic rank sync
+    get().startPeriodicRankSync()
   },
 
   stopPolling: () => {
     set({ isPolling: false })
-    const intervalId = (window as any).__pollingIntervalId
+    const timeoutId = (window as any).__pollingTimeoutId
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      ;(window as any).__pollingTimeoutId = null
+    }
+    // Also stop periodic rank sync
+    get().stopPeriodicRankSync()
+  },
+
+  // Schedule a rank sync with debounce (3 seconds to let client stabilize)
+  scheduleRankSync: () => {
+    if (get().pendingRankSync) return
+    set({ pendingRankSync: true })
+
+    setTimeout(async () => {
+      await get().executeRankSync()
+      set({ pendingRankSync: false, lastRankSyncTime: Date.now() })
+    }, 3000) // 3-second debounce
+  },
+
+  // Execute rank sync if conditions are met
+  executeRankSync: async () => {
+    const { activeAccountId, settings } = get()
+
+    // Skip if no active account or auto-sync disabled
+    if (!activeAccountId) return
+    if (settings?.autoRankSync === false) return
+
+    try {
+      set({ rankSyncError: null })
+      await get().detectAndUpdateRanks()
+    } catch (e) {
+      set({ rankSyncError: e instanceof Error ? e.message : 'Sync failed' })
+    }
+  },
+
+  // Start periodic rank sync checker (every 60s, respects cooldown)
+  startPeriodicRankSync: () => {
+    const intervalId = setInterval(() => {
+      const { activeAccountId, settings, lastRankSyncTime, pendingRankSync } = get()
+
+      // Skip if no active account, auto-sync disabled, or sync pending
+      if (!activeAccountId || settings?.autoRankSync === false || pendingRankSync) return
+
+      // Check cooldown (default 10 min = 600000ms)
+      const cooldown = settings?.rankSyncIntervalMs || 600000
+      const now = Date.now()
+      if (now - (lastRankSyncTime || 0) >= cooldown) {
+        get().executeRankSync().then(() => {
+          set({ lastRankSyncTime: Date.now() })
+        })
+      }
+    }, 60000) // Check every minute
+
+    ;(window as any).__rankSyncIntervalId = intervalId
+  },
+
+  stopPeriodicRankSync: () => {
+    const intervalId = (window as any).__rankSyncIntervalId
     if (intervalId) {
       clearInterval(intervalId)
-      ;(window as any).__pollingIntervalId = null
+      ;(window as any).__rankSyncIntervalId = null
     }
   },
 
