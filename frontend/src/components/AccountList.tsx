@@ -1165,8 +1165,8 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
               )}
             />
           </div>
-
-          <div className="flex gap-2 sm:gap-3 pt-2 sticky bottom-0 bg-[var(--color-card)]">
+        </form>
+        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
@@ -1186,7 +1186,6 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
               {loading ? 'Saving...' : (account ? 'Save' : 'Add')}
             </button>
           </div>
-        </form>
       </div>
     </div>
   )
