@@ -54,20 +54,21 @@ type Game struct {
 
 // Account represents a gaming account with encrypted credentials
 type Account struct {
-	ID          string     `json:"id"`
-	DisplayName string     `json:"displayName"`
-	Username    string     `json:"username"` // Stored encrypted
-	Password    string     `json:"password"` // Stored encrypted
-	NetworkID   string     `json:"networkId"`
-	Tags        []string   `json:"tags"`
-	Notes       string     `json:"notes"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	ID          string    `json:"id"`
+	DisplayName string    `json:"displayName"`
+	Username    string    `json:"username"` // Stored encrypted
+	Password    string    `json:"password"` // Stored encrypted
+	NetworkID   string    `json:"networkId"`
+	Tags        []string  `json:"tags"`
+	Notes       string    `json:"notes"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 
 	// Riot-specific fields
-	RiotID   string `json:"riotId,omitempty"`   // e.g., "turkish aimer#doner"
-	PUUID    string `json:"puuid,omitempty"`    // Cached PUUID for API calls
-	Region   string `json:"region,omitempty"`   // e.g., "na1", "euw1"
+	RiotID    string `json:"riotId,omitempty"`    // e.g., "turkish aimer#doner"
+	PUUID     string `json:"puuid,omitempty"`     // Cached PUUID for API calls
+	Region    string `json:"region,omitempty"`    // e.g., "na1", "euw1"
+	EpicEmail string `json:"epicEmail,omitempty"` // Cached Epic login email for detection matching
 
 	// Game filters - which games this account is used for
 	Games []string `json:"games,omitempty"` // e.g., ["lol", "tft", "valorant"]
@@ -81,12 +82,12 @@ type Account struct {
 
 // CachedRank stores cached rank data for a specific queue
 type CachedRank struct {
-	GameID      string    `json:"gameId"`      // "lol", "tft", "valorant"
-	QueueType   string    `json:"queueType"`   // "RANKED_SOLO_5x5", "RANKED_TFT", etc.
-	QueueName   string    `json:"queueName"`   // "Solo/Duo", "TFT Ranked", etc.
-	Tier        string    `json:"tier"`        // "GOLD", "DIAMOND", etc.
-	Division    string    `json:"division"`    // "I", "II", "III", "IV"
-	LP          int       `json:"lp"`          // League Points
+	GameID      string    `json:"gameId"`    // "lol", "tft", "valorant"
+	QueueType   string    `json:"queueType"` // "RANKED_SOLO_5x5", "RANKED_TFT", etc.
+	QueueName   string    `json:"queueName"` // "Solo/Duo", "TFT Ranked", etc.
+	Tier        string    `json:"tier"`      // "GOLD", "DIAMOND", etc.
+	Division    string    `json:"division"`  // "I", "II", "III", "IV"
+	LP          int       `json:"lp"`        // League Points
 	Wins        int       `json:"wins"`
 	Losses      int       `json:"losses"`
 	DisplayRank string    `json:"displayRank"` // "Gold II 62 LP"
@@ -155,7 +156,7 @@ type Vault struct {
 // VaultData represents the decrypted vault contents
 type VaultData struct {
 	Accounts     []Account     `json:"accounts"`
-	GameNetworks []GameNetwork `json:"-"` // Excluded from JSON - always regenerated from DefaultGameNetworks()
+	GameNetworks []GameNetwork `json:"-"`    // Excluded from JSON - always regenerated from DefaultGameNetworks()
 	Tags         []string      `json:"tags"` // All available tags
 	Settings     Settings      `json:"settings"`
 }
@@ -247,6 +248,11 @@ func DefaultGameNetworks() []GameNetwork {
 					},
 				},
 			},
+		},
+		{
+			ID:    "epic",
+			Name:  "Epic Games",
+			Games: []Game{},
 		},
 	}
 }

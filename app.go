@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"OpenSmurfManager/internal/accounts"
+	"OpenSmurfManager/internal/detection"
 	"OpenSmurfManager/internal/models"
 	"OpenSmurfManager/internal/process"
 	"OpenSmurfManager/internal/riotapi"
@@ -237,10 +238,10 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 // Rank Detection & Auto-Update (exposed to frontend)
 // ============================================
 
-// DetectSignedInAccount detects the currently signed-in Riot account via LCU
-// Returns the detected account info with ranks, or nil if no client is running
+// DetectSignedInAccount detects the currently signed-in supported account.
+// Returns the detected account info, or nil if no supported client is running.
 func (a *App) DetectSignedInAccount() (*riotclient.DetectedAccount, error) {
-	return riotclient.DetectAndFetchRanks()
+	return detection.DetectSignedInAccount()
 }
 
 // IsInGame checks if the user is currently in an active game (not just client/lobby)
@@ -283,23 +284,14 @@ func (a *App) MatchAndUpdateAccount(detected *riotclient.DetectedAccount) (strin
 		return "", err
 	}
 
-	// Try to match by PUUID first (most reliable)
-	var matched *models.Account
-	if detected.PUUID != "" {
-		matched = riotclient.MatchAccountByPUUID(accounts, detected.PUUID)
-	}
-
-	// Fall back to Riot ID matching
-	if matched == nil && detected.RiotID != "" {
-		matched = riotclient.MatchAccountByRiotID(accounts, detected.RiotID)
-	}
+	matched := detection.MatchStoredAccount(accounts, detected)
 
 	if matched == nil {
 		return "", nil
 	}
 
-	// Update the account with detected ranks
-	riotclient.UpdateAccountRanks(matched, detected)
+	// Update the account with detected details
+	detection.ApplyDetection(matched, detected)
 
 	// Save the updated account
 	_, err = a.accounts.Update(*matched)
@@ -393,9 +385,9 @@ func (a *App) GetRiotAPIStatus() (bool, error) {
 	return settings.RiotAPIKey != "", nil
 }
 
-// IsRiotClientRunning checks if any Riot client is running
+// IsRiotClientRunning checks if any supported detection client is running.
 func (a *App) IsRiotClientRunning() bool {
-	_, err := riotclient.DetectAndFetchRanks()
+	_, err := detection.DetectSignedInAccount()
 	return err == nil
 }
 

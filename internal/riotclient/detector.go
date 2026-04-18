@@ -20,6 +20,9 @@ func (e *DetectionError) Error() string {
 
 // DetectedAccount represents an account detected via LCU
 type DetectedAccount struct {
+	NetworkID     string // e.g., "riot", "epic"
+	DisplayName   string // Primary label for the detected account
+	Email         string // Network-specific email/username when available
 	RiotID        string // e.g., "turkish aimer#doner"
 	GameName      string
 	TagLine       string
@@ -59,11 +62,13 @@ func DetectAndFetchRanks() (*DetectedAccount, error) {
 			}
 		}
 		return &DetectedAccount{
-			RiotID:     auth.GameName + "#" + auth.TagLine,
-			GameName:   auth.GameName,
-			TagLine:    auth.TagLine,
-			PUUID:      auth.PUUID,
-			DetectedAt: time.Now(),
+			NetworkID:   "riot",
+			DisplayName: auth.GameName + "#" + auth.TagLine,
+			RiotID:      auth.GameName + "#" + auth.TagLine,
+			GameName:    auth.GameName,
+			TagLine:     auth.TagLine,
+			PUUID:       auth.PUUID,
+			DetectedAt:  time.Now(),
 		}, nil
 	}
 
@@ -71,6 +76,8 @@ func DetectAndFetchRanks() (*DetectedAccount, error) {
 	riotID := summoner.GameName + "#" + summoner.TagLine
 
 	detected := &DetectedAccount{
+		NetworkID:     "riot",
+		DisplayName:   riotID,
 		RiotID:        riotID,
 		GameName:      summoner.GameName,
 		TagLine:       summoner.TagLine,

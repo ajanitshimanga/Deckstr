@@ -25,6 +25,7 @@ export interface AccountInput {
   notes: string
   // Riot-specific fields
   riotId?: string
+  epicEmail?: string
   region?: string
   games?: string[]
   cachedRanks?: models.CachedRank[]

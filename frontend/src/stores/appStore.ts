@@ -69,6 +69,43 @@ import {
 } from '../../wailsjs/go/main/App'
 import { riotclient, updater } from '../../wailsjs/go/models'
 
+const getDetectedAccountLabel = (detected: riotclient.DetectedAccount | null | undefined) =>
+  (detected?.RiotID || detected?.DisplayName || '').trim()
+
+const matchesDetectedAccount = (account: models.Account, detected: riotclient.DetectedAccount) => {
+  const networkId = (detected.NetworkID || 'riot').toLowerCase()
+
+  if (networkId === 'epic') {
+    const detectedEmail = detected.Email?.toLowerCase()
+    const detectedDisplayName = detected.DisplayName?.toLowerCase()
+
+    return account.networkId === 'epic' && (
+      (!!detectedEmail && account.epicEmail?.toLowerCase() === detectedEmail) ||
+      (!!detectedEmail && account.username?.toLowerCase() === detectedEmail) ||
+      (!!detectedDisplayName && account.displayName?.toLowerCase() === detectedDisplayName)
+    )
+  }
+
+  const riotIdLower = detected.RiotID?.toLowerCase()
+  return (!!riotIdLower && account.riotId?.toLowerCase() === riotIdLower) ||
+    (!!detected.PUUID && account.puuid === detected.PUUID)
+}
+
+const isRiotSyncCandidate = (
+  accounts: models.Account[],
+  activeAccountId: string | null,
+  detected: riotclient.DetectedAccount | null
+) => {
+  if (!activeAccountId) return false
+
+  const activeAccount = accounts.find(account => account.id === activeAccountId)
+  if (activeAccount?.networkId) {
+    return activeAccount.networkId === 'riot'
+  }
+
+  return (detected?.NetworkID || 'riot').toLowerCase() === 'riot'
+}
+
 interface AppStore {
   // App state
   appState: AppState
@@ -159,7 +196,7 @@ interface AppStore {
   stopPolling: () => void
   // Rank sync actions
   scheduleRankSync: () => void
-  executeRankSync: () => Promise<void>
+  executeRankSync: () => Promise<boolean>
   startPeriodicRankSync: () => void
   stopPeriodicRankSync: () => void
 
@@ -558,7 +595,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ isDetecting: true, error: null })
     try {
       const detected = await DetectSignedInAccount()
-      if (!detected) {
+      if (!detected || !getDetectedAccountLabel(detected)) {
         set({ isDetecting: false, detectedAccount: null, activeAccountId: null })
         return null
       }
@@ -570,7 +607,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // Reload accounts to get updated data
       await get().loadAccounts()
 
-      set({ isDetecting: false, activeAccountId: matchedId || null, lastRankSyncTime: Date.now() })
+      set({
+        isDetecting: false,
+        activeAccountId: matchedId || null,
+        lastRankSyncTime: detected.NetworkID === 'riot' ? Date.now() : get().lastRankSyncTime,
+      })
       return matchedId || null
     } catch (e) {
       set({ isDetecting: false, error: String(e), activeAccountId: null })
@@ -611,9 +652,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ isInGame: false })
 
       const detected = await DetectSignedInAccount()
+      const detectedLabel = getDetectedAccountLabel(detected)
 
-      // Check if we got a valid detection (has RiotID)
-      if (!detected || !detected.RiotID) {
+      // Check if we got a valid detection label for any supported network.
+      if (!detected || !detectedLabel) {
         // Increment failure count for empty detection too
         const failures = get().pollingFailures + 1
         const threshold = intervals.failureThreshold || 2
@@ -643,11 +685,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // Match to existing account without updating ranks (lightweight)
       const { accounts, activeAccountId: previousActiveId, settings, lastRankSyncTime } = get()
-      const riotIdLower = detected.RiotID.toLowerCase()
-      const matched = accounts.find(acc =>
-        acc.riotId?.toLowerCase() === riotIdLower ||
-        acc.puuid === detected.PUUID
-      )
+      const matched = accounts.find(acc => matchesDetectedAccount(acc, detected))
 
       const newActiveId = matched?.id || null
 
@@ -663,7 +701,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
 
       // Trigger rank sync on new account detection (if auto-sync enabled and cooldown passed)
-      if (isNewAccount && settings?.autoRankSync !== false) {
+      if (isNewAccount && detected.NetworkID === 'riot' && settings?.autoRankSync !== false) {
         const cooldown = settings?.rankSyncIntervalMs || 600000
         const now = Date.now()
         if (now - (lastRankSyncTime || 0) >= cooldown) {
@@ -756,41 +794,50 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ pendingRankSync: true })
 
     setTimeout(async () => {
-      await get().executeRankSync()
-      set({ pendingRankSync: false, lastRankSyncTime: Date.now() })
+      const synced = await get().executeRankSync()
+      set({
+        pendingRankSync: false,
+        ...(synced ? { lastRankSyncTime: Date.now() } : {}),
+      })
     }, 3000) // 3-second debounce
   },
 
   // Execute rank sync if conditions are met
   executeRankSync: async () => {
-    const { activeAccountId, settings } = get()
+    const { activeAccountId, settings, accounts, detectedAccount } = get()
 
     // Skip if no active account or auto-sync disabled
-    if (!activeAccountId) return
-    if (settings?.autoRankSync === false) return
+    if (!activeAccountId) return false
+    if (settings?.autoRankSync === false) return false
+    if (!isRiotSyncCandidate(accounts, activeAccountId, detectedAccount)) return false
 
     try {
       set({ rankSyncError: null })
       await get().detectAndUpdateRanks()
+      return true
     } catch (e) {
       set({ rankSyncError: e instanceof Error ? e.message : 'Sync failed' })
+      return false
     }
   },
 
   // Start periodic rank sync checker (every 60s, respects cooldown)
   startPeriodicRankSync: () => {
     const intervalId = setInterval(() => {
-      const { activeAccountId, settings, lastRankSyncTime, pendingRankSync } = get()
+      const { activeAccountId, settings, lastRankSyncTime, pendingRankSync, accounts, detectedAccount } = get()
 
       // Skip if no active account, auto-sync disabled, or sync pending
       if (!activeAccountId || settings?.autoRankSync === false || pendingRankSync) return
+      if (!isRiotSyncCandidate(accounts, activeAccountId, detectedAccount)) return
 
       // Check cooldown (default 10 min = 600000ms)
       const cooldown = settings?.rankSyncIntervalMs || 600000
       const now = Date.now()
       if (now - (lastRankSyncTime || 0) >= cooldown) {
-        get().executeRankSync().then(() => {
-          set({ lastRankSyncTime: Date.now() })
+        get().executeRankSync().then((synced) => {
+          if (synced) {
+            set({ lastRankSyncTime: Date.now() })
+          }
         })
       }
     }, 60000) // Check every minute

@@ -16,7 +16,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
-import { models } from '../../wailsjs/go/models'
+import { models, riotclient } from '../../wailsjs/go/models'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 import { SettingsModal } from './SettingsModal'
 
@@ -65,6 +65,19 @@ function getPrimaryRank(account: models.Account): models.CachedRank | undefined 
   return account.cachedRanks.find(r => r.tier) || account.cachedRanks[0]
 }
 
+function getDetectedAccountLabel(detected: riotclient.DetectedAccount | null | undefined): string {
+  return (detected?.RiotID || detected?.DisplayName || '').trim()
+}
+
+function getDetectedNetworkName(detected: riotclient.DetectedAccount | null | undefined): string {
+  switch ((detected?.NetworkID || 'riot').toLowerCase()) {
+    case 'epic':
+      return 'Epic'
+    default:
+      return 'Riot'
+  }
+}
+
 type SortField = 'name' | 'rank' | 'updated' | 'created'
 type SortDirection = 'asc' | 'desc'
 
@@ -100,6 +113,8 @@ export function AccountList() {
   const [selectedGame, setSelectedGame] = useState<string | null>(null)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const detectedAccountLabel = getDetectedAccountLabel(detectedAccount)
+  const detectedNetworkName = getDetectedNetworkName(detectedAccount)
 
   // Filter by game then sort accounts
   const accounts = useMemo(() => {
@@ -233,7 +248,7 @@ export function AccountList() {
       </header>
 
       {/* Currently Playing Banner - Instagram-style clean banner */}
-      {detectedAccount && detectedAccount.RiotID && (
+      {detectedAccount && detectedAccountLabel && (
         <div className={cn(
           "mx-3 sm:mx-4 lg:mx-5 mt-2.5 sm:mt-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg border transition-all duration-200",
           activeAccountId
@@ -256,10 +271,10 @@ export function AccountList() {
                 "text-[10px] sm:text-xs font-medium uppercase tracking-wider",
                 activeAccountId ? "text-green-400/80" : "text-amber-400/80"
               )}>
-                {activeAccountId ? "Now Playing" : "Detected"}
+                {activeAccountId ? `${detectedNetworkName} Active` : `${detectedNetworkName} Detected`}
               </p>
               <p className="text-sm sm:text-base font-semibold text-[var(--color-foreground)] truncate">
-                {detectedAccount.RiotID}
+                {detectedAccountLabel}
               </p>
             </div>
             {activeAccountId ? (
@@ -628,13 +643,22 @@ export function AccountList() {
           onLink={async (accountId) => {
             const account = allAccounts.find(a => a.id === accountId)
             if (account && detectedAccount) {
-              await editAccount({
-                ...account,
-                riotId: detectedAccount.RiotID,
-                puuid: detectedAccount.PUUID,
-                cachedRanks: detectedAccount.Ranks || [],
-                topMasteries: detectedAccount.TopMasteries || [],
-              })
+              const networkId = (detectedAccount.NetworkID || 'riot').toLowerCase()
+
+              await editAccount(
+                networkId === 'epic'
+                  ? {
+                      ...account,
+                      epicEmail: detectedAccount.Email || account.epicEmail || '',
+                    }
+                  : {
+                      ...account,
+                      riotId: detectedAccount.RiotID,
+                      puuid: detectedAccount.PUUID,
+                      cachedRanks: detectedAccount.Ranks || [],
+                      topMasteries: detectedAccount.TopMasteries || [],
+                    }
+              )
               await loadAccounts()
             }
             setShowLinkModal(false)
@@ -765,23 +789,36 @@ function MasteryDisplay({ mastery }: { mastery: models.ChampionMastery }) {
   )
 }
 
-// Link Account Modal - Responsive modal for linking Riot accounts
+// Link Account Modal - Responsive modal for linking detected accounts
 function LinkAccountModal({
   detectedAccount,
   accounts,
   onLink,
   onClose
 }: {
-  detectedAccount: { RiotID: string; PUUID: string; Ranks?: models.CachedRank[]; SummonerLevel?: number }
+  detectedAccount: riotclient.DetectedAccount
   accounts: models.Account[]
   onLink: (accountId: string) => Promise<void>
   onClose: () => void
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [linking, setLinking] = useState(false)
+  const networkId = (detectedAccount.NetworkID || 'riot').toLowerCase()
+  const detectedLabel = getDetectedAccountLabel(detectedAccount)
+  const networkName = getDetectedNetworkName(detectedAccount)
 
-  // Filter to show accounts that don't already have a riotId linked
-  const availableAccounts = accounts.filter(acc => !acc.riotId || acc.riotId === '')
+  // Filter to show accounts for the same network that are not already linked.
+  const availableAccounts = accounts.filter(acc => {
+    if (acc.networkId !== networkId) {
+      return false
+    }
+
+    if (networkId === 'epic') {
+      return !acc.epicEmail || acc.epicEmail === ''
+    }
+
+    return !acc.riotId || acc.riotId === ''
+  })
 
   const handleLink = async () => {
     if (!selectedId) return
@@ -795,17 +832,17 @@ function LinkAccountModal({
       <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl">
         <div className="p-3 sm:p-4 border-b border-[var(--color-border)]">
           <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
-            Link Riot Account
+            Link {networkName} Account
           </h2>
           <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-1">
-            Connect <span className="font-semibold text-[var(--color-foreground)] break-all">{detectedAccount.RiotID}</span> to one of your saved accounts
+            Connect <span className="font-semibold text-[var(--color-foreground)] break-all">{detectedLabel}</span> to one of your saved accounts
           </p>
         </div>
 
         <div className="p-3 sm:p-4 space-y-2 sm:space-y-3 max-h-[50vh] sm:max-h-80 overflow-y-auto">
           {availableAccounts.length === 0 ? (
             <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] text-center py-4">
-              All accounts are already linked to a Riot ID
+              All {networkName} accounts are already linked
             </p>
           ) : (
             availableAccounts.map(account => (
@@ -881,6 +918,7 @@ function LinkAccountModal({
 // Account Modal Component - Responsive form modal
 function AccountModal({ account, onClose }: { account: models.Account | null; onClose: () => void }) {
   const { gameNetworks, tags, addAccount, editAccount, createTag } = useAppStore()
+  const formId = account ? 'edit-account-form' : 'add-account-form'
   const [formData, setFormData] = useState({
     displayName: account?.displayName || '',
     username: account?.username || '',
@@ -889,6 +927,7 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
     tags: account?.tags || [],
     notes: account?.notes || '',
     riotId: account?.riotId || '',
+    epicEmail: account?.epicEmail || '',
     region: account?.region || 'na1',
     games: account?.games || ['lol', 'tft'],
   })
@@ -946,7 +985,7 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
           </h2>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
+        <form id={formId} onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
           <div className="space-y-1.5 sm:space-y-2">
             <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
               Display Name
@@ -1009,7 +1048,19 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
             </label>
             <select
               value={formData.networkId}
-              onChange={(e) => setFormData(prev => ({ ...prev, networkId: e.target.value }))}
+              onChange={(e) => {
+                const networkId = e.target.value
+                setFormData(prev => ({
+                  ...prev,
+                  networkId,
+	                  epicEmail: networkId === 'epic' ? prev.epicEmail : '',
+                  riotId: networkId === 'riot' ? prev.riotId : '',
+                  region: networkId === 'riot' ? (prev.region || 'na1') : '',
+                  games: networkId === 'riot'
+                    ? (prev.games.length > 0 ? prev.games : ['lol', 'tft'])
+                    : [],
+                }))
+              }}
               className={cn(
                 'w-full px-2.5 sm:px-3 py-2 rounded-lg sm:rounded-xl text-sm',
                 'bg-[var(--color-muted)] border border-[var(--color-border)]',
@@ -1175,6 +1226,7 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
               Cancel
             </button>
             <button
+              form={formId}
               type="submit"
               disabled={loading || !formData.username || !formData.password}
               className={cn(
