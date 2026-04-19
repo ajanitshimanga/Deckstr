@@ -70,7 +70,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go.mod
 
       # The root `main` package needs frontend/dist (gitignored, built by
       # Wails) to compile. Test packages live under internal/ and test/.
