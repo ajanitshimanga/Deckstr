@@ -59,10 +59,17 @@ func NewStorageService() (*StorageService, error) {
 		return nil, err
 	}
 
+	return NewStorageServiceWithPath(vaultPath), nil
+}
+
+// NewStorageServiceWithPath creates a storage service backed by the given
+// vault file path. Intended for tests and tooling that need to control the
+// storage location instead of using the OS config directory.
+func NewStorageServiceWithPath(vaultPath string) *StorageService {
 	return &StorageService{
 		crypto:    crypto.NewCryptoService(),
 		vaultPath: vaultPath,
-	}, nil
+	}
 }
 
 // getVaultPath returns the path to the vault file

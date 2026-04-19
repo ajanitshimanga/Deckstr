@@ -73,7 +73,7 @@ jobs:
           go-version: '1.21'
 
       - name: Run tests
-        run: go test ./internal/... -v
+        run: go test ./... -v
 
   release:
     needs: [build-windows, test]
