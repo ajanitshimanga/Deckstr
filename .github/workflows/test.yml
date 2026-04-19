@@ -23,13 +23,17 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
-      - name: Build
-        run: go build ./...
+      # The root `main` package uses //go:embed all:frontend/dist, which is
+      # gitignored and only produced by a frontend build. Our test packages
+      # (internal/..., test/...) don't depend on it, so build & test those
+      # explicitly rather than running go-wide commands that pull in main.
+      - name: Build (non-main packages)
+        run: go build ./internal/... ./test/...
 
       - name: Test (with race detector + coverage)
         env:
           CGO_ENABLED: '1'
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race -coverprofile=coverage.out ./internal/... ./test/...
 
       - name: Show coverage summary
         run: go tool cover -func=coverage.out | tail -20
@@ -45,12 +49,15 @@ jobs:
   frontend:
     name: Frontend (build)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -59,8 +66,19 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package.json
 
-      - name: Install dependencies
+      # Wails generates the TypeScript bindings under frontend/wailsjs/ that
+      # the React code imports. These are gitignored, so we must regenerate
+      # them before the TS build can succeed.
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Generate Wails bindings
+        run: wails generate module
+
+      - name: Install frontend dependencies
+        working-directory: frontend
         run: npm install
 
-      - name: Build
+      - name: Build frontend
+        working-directory: frontend
         run: npm run build

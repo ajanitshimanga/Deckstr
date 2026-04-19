@@ -72,8 +72,10 @@ jobs:
         with:
           go-version: '1.21'
 
+      # The root `main` package needs frontend/dist (gitignored, built by
+      # Wails) to compile. Test packages live under internal/ and test/.
       - name: Run tests
-        run: go test ./... -v
+        run: go test ./internal/... ./test/... -v
 
   release:
     needs: [build-windows, test]
