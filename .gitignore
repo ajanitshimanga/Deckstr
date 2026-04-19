@@ -8,10 +8,13 @@ frontend/node_modules/
 frontend/dist/
 package-lock.json
 
-# Claude Code (keep docs, ignore local settings)
+# Claude Code (keep docs and shared hooks, ignore local settings)
 .claude/*
 !.claude/SKILLS.md
 !.claude/preferences.md
+!.claude/settings.json
+!.claude/hooks/
+.claude/.last-validation
 
 # Wails generated files
 frontend/wailsjs/
