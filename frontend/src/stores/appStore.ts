@@ -67,7 +67,7 @@ import {
   DownloadAndInstallUpdate,
   OpenReleasePage,
 } from '../../wailsjs/go/main/App'
-import { riotclient, updater } from '../../wailsjs/go/models'
+import { providers, updater } from '../../wailsjs/go/models'
 
 interface AppStore {
   // App state
@@ -92,7 +92,7 @@ interface AppStore {
   settings: models.Settings | null
 
   // Detection state
-  detectedAccount: riotclient.DetectedAccount | null
+  detectedAccount: providers.DetectedAccount | null
   isDetecting: boolean
   riotClientRunning: boolean
   activeAccountId: string | null // Currently signed-in account ID

@@ -8,8 +8,9 @@ import (
 	"OpenSmurfManager/internal/accounts"
 	"OpenSmurfManager/internal/models"
 	"OpenSmurfManager/internal/process"
+	"OpenSmurfManager/internal/providers"
+	"OpenSmurfManager/internal/providers/riot"
 	"OpenSmurfManager/internal/riotapi"
-	"OpenSmurfManager/internal/riotclient"
 	"OpenSmurfManager/internal/storage"
 	"OpenSmurfManager/internal/updater"
 
@@ -18,10 +19,11 @@ import (
 
 // App struct holds the application state
 type App struct {
-	ctx      context.Context
-	storage  *storage.StorageService
-	accounts *accounts.AccountService
-	updater  *updater.Updater
+	ctx       context.Context
+	storage   *storage.StorageService
+	accounts  *accounts.AccountService
+	updater   *updater.Updater
+	providers *providers.Registry
 }
 
 // NewApp creates a new App application struct
@@ -42,6 +44,11 @@ func (a *App) startup(ctx context.Context) {
 	a.storage = storageService
 	a.accounts = accounts.NewAccountService(storageService)
 	a.updater = updater.NewUpdater()
+
+	// Register all platform providers. Adding a new platform = adding one
+	// MustRegister call here.
+	a.providers = providers.NewRegistry()
+	a.providers.MustRegister(riot.New())
 }
 
 // ============================================
@@ -237,10 +244,11 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 // Rank Detection & Auto-Update (exposed to frontend)
 // ============================================
 
-// DetectSignedInAccount detects the currently signed-in Riot account via LCU
-// Returns the detected account info with ranks, or nil if no client is running
-func (a *App) DetectSignedInAccount() (*riotclient.DetectedAccount, error) {
-	return riotclient.DetectAndFetchRanks()
+// DetectSignedInAccount detects the currently signed-in account from any
+// registered platform provider. Returns the detected account info with ranks,
+// or nil if no supported client is running.
+func (a *App) DetectSignedInAccount() (*providers.DetectedAccount, error) {
+	return a.providers.DetectAny(a.ctx)
 }
 
 // IsInGame checks if the user is currently in an active game (not just client/lobby)
@@ -271,9 +279,10 @@ func (a *App) GetActiveGameProcess() string {
 	return process.GetRunningProcess(allGameProcesses)
 }
 
-// MatchAndUpdateAccount matches detected account to stored accounts and updates ranks
-// Returns the matched account ID if found, empty string otherwise
-func (a *App) MatchAndUpdateAccount(detected *riotclient.DetectedAccount) (string, error) {
+// MatchAndUpdateAccount matches a detected account to stored accounts and
+// updates ranks via the owning provider. Returns the matched account ID if
+// found, empty string otherwise.
+func (a *App) MatchAndUpdateAccount(detected *providers.DetectedAccount) (string, error) {
 	if detected == nil {
 		return "", nil
 	}
@@ -283,38 +292,30 @@ func (a *App) MatchAndUpdateAccount(detected *riotclient.DetectedAccount) (strin
 		return "", err
 	}
 
-	// Try to match by PUUID first (most reliable)
-	var matched *models.Account
-	if detected.PUUID != "" {
-		matched = riotclient.MatchAccountByPUUID(accounts, detected.PUUID)
-	}
-
-	// Fall back to Riot ID matching
-	if matched == nil && detected.RiotID != "" {
-		matched = riotclient.MatchAccountByRiotID(accounts, detected.RiotID)
-	}
-
+	matched := a.providers.MatchAccount(accounts, detected)
 	if matched == nil {
 		return "", nil
 	}
 
-	// Update the account with detected ranks
-	riotclient.UpdateAccountRanks(matched, detected)
+	a.providers.UpdateAccount(matched, detected)
 
-	// Save the updated account
-	_, err = a.accounts.Update(*matched)
-	if err != nil {
+	if _, err := a.accounts.Update(*matched); err != nil {
 		return "", err
 	}
 
 	return matched.ID, nil
 }
 
-// RefreshAccountRanksLCU refreshes ranks for an account using LCU (must be signed in)
+// RefreshAccountRanksLCU refreshes ranks for a stored account from the
+// currently signed-in client session. The session must belong to the same
+// account being refreshed.
 func (a *App) RefreshAccountRanksLCU(accountID string) error {
-	detected, err := riotclient.DetectAndFetchRanks()
+	detected, err := a.providers.DetectAny(a.ctx)
 	if err != nil {
 		return err
+	}
+	if detected == nil {
+		return fmt.Errorf("no signed-in client detected")
 	}
 
 	account, err := a.accounts.GetByID(accountID)
@@ -322,15 +323,19 @@ func (a *App) RefreshAccountRanksLCU(accountID string) error {
 		return err
 	}
 
-	// Verify the signed-in account matches
-	riotIDLower := strings.ToLower(account.RiotID)
-	detectedLower := strings.ToLower(detected.RiotID)
-	if riotIDLower != detectedLower && account.PUUID != detected.PUUID {
-		return fmt.Errorf("signed-in account (%s) does not match requested account (%s)", detected.RiotID, account.RiotID)
+	if account.NetworkID != "" && account.NetworkID != detected.NetworkID {
+		return fmt.Errorf("signed-in %s account does not match requested %s account",
+			detected.NetworkID, account.NetworkID)
 	}
 
-	// Update ranks
-	riotclient.UpdateAccountRanks(account, detected)
+	// Verify the signed-in account matches the one being refreshed.
+	matchedAccount := a.providers.MatchAccount([]models.Account{*account}, detected)
+	if matchedAccount == nil {
+		return fmt.Errorf("signed-in account (%s) does not match requested account (%s)",
+			detected.DisplayName, strings.TrimSpace(account.DisplayName))
+	}
+
+	a.providers.UpdateAccount(account, detected)
 	_, err = a.accounts.Update(*account)
 	return err
 }
@@ -393,10 +398,21 @@ func (a *App) GetRiotAPIStatus() (bool, error) {
 	return settings.RiotAPIKey != "", nil
 }
 
-// IsRiotClientRunning checks if any Riot client is running
+// IsRiotClientRunning checks if the Riot client is running. Kept for
+// backwards compatibility with the frontend - prefer IsAnyClientRunning.
 func (a *App) IsRiotClientRunning() bool {
-	_, err := riotclient.DetectAndFetchRanks()
-	return err == nil
+	p := a.providers.Get(riot.NetworkID)
+	if p == nil {
+		return false
+	}
+	return p.IsClientRunning(a.ctx)
+}
+
+// IsAnyClientRunning returns true if any registered platform's client is
+// currently running. Used by polling logic to decide whether to attempt
+// detection.
+func (a *App) IsAnyClientRunning() bool {
+	return a.providers.IsAnyClientRunning(a.ctx)
 }
 
 // ============================================

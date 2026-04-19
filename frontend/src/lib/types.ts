@@ -1,8 +1,8 @@
 // Re-export types from Wails-generated models
-export type { models, riotclient } from '../../wailsjs/go/models'
+export type { models, providers } from '../../wailsjs/go/models'
 
 // Import the classes for use
-import { models } from '../../wailsjs/go/models'
+import { models, providers } from '../../wailsjs/go/models'
 
 export type Account = models.Account
 export type GameNetwork = models.GameNetwork
@@ -10,6 +10,7 @@ export type Game = models.Game
 export type CachedRank = models.CachedRank
 export type ChampionMastery = models.ChampionMastery
 export type Settings = models.Settings
+export type DetectedAccount = providers.DetectedAccount
 
 // App state
 export type AppState = 'loading' | 'locked' | 'create' | 'unlocked'

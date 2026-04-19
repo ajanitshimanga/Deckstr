@@ -16,7 +16,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
-import { models } from '../../wailsjs/go/models'
+import { models, providers } from '../../wailsjs/go/models'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 import { SettingsModal } from './SettingsModal'
 
@@ -772,7 +772,7 @@ function LinkAccountModal({
   onLink,
   onClose
 }: {
-  detectedAccount: { RiotID: string; PUUID: string; Ranks?: models.CachedRank[]; SummonerLevel?: number }
+  detectedAccount: providers.DetectedAccount
   accounts: models.Account[]
   onLink: (accountId: string) => Promise<void>
   onClose: () => void
