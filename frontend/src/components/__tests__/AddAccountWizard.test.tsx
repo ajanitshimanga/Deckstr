@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 const addAccount = vi.fn()
+const createTag = vi.fn()
 
 vi.mock('../../stores/appStore', () => ({
   useAppStore: () => ({
@@ -22,7 +23,9 @@ vi.mock('../../stores/appStore', () => ({
         games: [{ id: 'cs2', name: 'Counter-Strike 2', networkId: 'steam' }],
       },
     ],
+    tags: ['main', 'smurf'],
     addAccount,
+    createTag,
   }),
 }))
 
@@ -48,6 +51,13 @@ describe('fuzzyMatch', () => {
 describe('AddAccountWizard', () => {
   beforeEach(() => {
     addAccount.mockReset()
+    createTag.mockReset()
+  })
+
+  it('masks the password field with type="password"', () => {
+    render(<AddAccountWizard onClose={vi.fn()} />)
+    const pw = screen.getByPlaceholderText('Enter password') as HTMLInputElement
+    expect(pw.type).toBe('password')
   })
 
   it('requires username and password before advancing from step 1', async () => {
@@ -124,6 +134,60 @@ describe('AddAccountWizard', () => {
     expect(payload.games).toEqual(['lol', 'tft', 'valorant']) // defaults to all network games
     expect(payload.region).toBe('na1')
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('pre-selects all games when a network is picked (opt-out UX)', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /riot games/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // On step 3 every Riot game tile should already be selected.
+    expect(screen.getByRole('button', { name: /league of legends/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: /teamfight tactics/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: /valorant/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('lets the user toggle existing tags and create new ones', async () => {
+    const user = userEvent.setup()
+    createTag.mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    render(<AddAccountWizard onClose={onClose} />)
+
+    // Advance to step 3
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /riot games/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Toggle existing tag
+    await user.click(screen.getByRole('button', { name: /main/i }))
+
+    // Create a brand new tag via Enter key
+    const tagInput = screen.getByLabelText(/create a new tag/i)
+    await user.type(tagInput, 'ranked-grind{Enter}')
+
+    expect(createTag).toHaveBeenCalledWith('ranked-grind')
+    expect(tagInput).toHaveValue('')
+
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    expect(addAccount).toHaveBeenCalledTimes(1)
+    expect(addAccount.mock.calls[0][0].tags).toEqual(['main', 'ranked-grind'])
   })
 
   it('Back button returns to previous step without losing data', async () => {
