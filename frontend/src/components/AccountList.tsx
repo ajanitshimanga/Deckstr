@@ -879,7 +879,7 @@ function LinkAccountModal({
 }
 
 // Account Modal Component - Responsive form modal
-function AccountModal({ account, onClose }: { account: models.Account | null; onClose: () => void }) {
+export function AccountModal({ account, onClose }: { account: models.Account | null; onClose: () => void }) {
   const { gameNetworks, tags, addAccount, editAccount, createTag } = useAppStore()
   const [formData, setFormData] = useState({
     displayName: account?.displayName || '',
@@ -946,7 +946,7 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
           </h2>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
+        <form id="account-modal-form" onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
           <div className="space-y-1.5 sm:space-y-2">
             <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
               Display Name
@@ -1176,6 +1176,7 @@ function AccountModal({ account, onClose }: { account: models.Account | null; on
             </button>
             <button
               type="submit"
+              form="account-modal-form"
               disabled={loading || !formData.username || !formData.password}
               className={cn(
                 'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
