@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"OpenSmurfManager/internal/accounts"
 	"OpenSmurfManager/internal/models"
@@ -12,6 +13,7 @@ import (
 	"OpenSmurfManager/internal/providers/riot"
 	"OpenSmurfManager/internal/riotapi"
 	"OpenSmurfManager/internal/storage"
+	"OpenSmurfManager/internal/telemetry"
 	"OpenSmurfManager/internal/updater"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -24,6 +26,10 @@ type App struct {
 	accounts  *accounts.AccountService
 	updater   *updater.Updater
 	providers *providers.Registry
+
+	// startTime is set by main() before Wails.Run so startup() can report
+	// cold-boot latency in the app.start telemetry event.
+	startTime time.Time
 }
 
 // NewApp creates a new App application struct
@@ -49,6 +55,18 @@ func (a *App) startup(ctx context.Context) {
 	// MustRegister call here.
 	a.providers = providers.NewRegistry()
 	a.providers.MustRegister(riot.New())
+
+	// App-start latency = time from main() to Wails runtime ready.
+	// Separately emit has_vault so DAU/MAU queries can distinguish
+	// brand-new installs from returning users.
+	var latencyMs int64
+	if !a.startTime.IsZero() {
+		latencyMs = time.Since(a.startTime).Milliseconds()
+	}
+	telemetry.LogInfo("app.start", map[string]interface{}{
+		"startup_latency_ms": latencyMs,
+		"has_vault":          a.storage.VaultExists(),
+	})
 }
 
 // ============================================
@@ -84,7 +102,9 @@ func (a *App) CreateVaultWithRecoveryPhrase(username, masterPassword, hint strin
 
 // Unlock decrypts the vault with username and master password
 func (a *App) Unlock(username, masterPassword string) error {
-	return a.storage.Unlock(username, masterPassword)
+	err := a.storage.Unlock(username, masterPassword)
+	telemetry.LogInfo("vault.unlock", map[string]interface{}{"success": err == nil})
+	return err
 }
 
 // GetPasswordHint returns the password hint (available without unlocking)
@@ -139,6 +159,7 @@ func (a *App) GetStoredUsername() (string, error) {
 // Lock clears the vault from memory
 func (a *App) Lock() {
 	a.storage.Lock()
+	telemetry.LogInfo("vault.lock", nil)
 }
 
 // GetVaultPath returns the path to the vault file
@@ -177,17 +198,31 @@ func (a *App) SearchAccounts(query string) ([]models.Account, error) {
 
 // CreateAccount creates a new account
 func (a *App) CreateAccount(account models.Account) (*models.Account, error) {
-	return a.accounts.Create(account)
+	result, err := a.accounts.Create(account)
+	telemetry.LogInfo("account.add", map[string]interface{}{
+		"network_id":  account.NetworkID,
+		"games_count": len(account.Games),
+		"tags_count":  len(account.Tags),
+		"success":     err == nil,
+	})
+	return result, err
 }
 
 // UpdateAccount updates an existing account
 func (a *App) UpdateAccount(account models.Account) (*models.Account, error) {
-	return a.accounts.Update(account)
+	result, err := a.accounts.Update(account)
+	telemetry.LogInfo("account.edit", map[string]interface{}{
+		"network_id": account.NetworkID,
+		"success":    err == nil,
+	})
+	return result, err
 }
 
 // DeleteAccount removes an account
 func (a *App) DeleteAccount(id string) error {
-	return a.accounts.Delete(id)
+	err := a.accounts.Delete(id)
+	telemetry.LogInfo("account.delete", map[string]interface{}{"success": err == nil})
+	return err
 }
 
 // UpdateAccountRank updates rank info for an account
@@ -248,7 +283,19 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 // registered platform provider. Returns the detected account info with ranks,
 // or nil if no supported client is running.
 func (a *App) DetectSignedInAccount() (*providers.DetectedAccount, error) {
-	return a.providers.DetectAny(a.ctx)
+	start := time.Now()
+	detected, err := a.providers.DetectAny(a.ctx)
+	result := "none"
+	if err != nil {
+		result = "error"
+	} else if detected != nil {
+		result = "detected"
+	}
+	telemetry.LogInfo("account.detect", map[string]interface{}{
+		"result":       result,
+		"duration_ms":  time.Since(start).Milliseconds(),
+	})
+	return detected, err
 }
 
 // IsInGame checks if the user is currently in an active game (not just client/lobby)
@@ -460,4 +507,32 @@ func (a *App) DownloadAndInstallUpdate(downloadURL string) error {
 // OpenReleasePage opens the GitHub release page in browser
 func (a *App) OpenReleasePage(url string) error {
 	return a.updater.OpenReleasePage(url)
+}
+
+// ============================================
+// Telemetry bridge (exposed to frontend)
+// ============================================
+
+// LogEvent records a UI-layer telemetry event. Level must be one of
+// "info", "warn", "error" (anything else is treated as info). Attributes
+// are stringly-typed at this boundary for simple Wails bindings; the
+// Go-side logger widens them into the OTel attribute shape.
+//
+// Callers must never pass credentials, usernames, or other vault data.
+// The frontend wrapper in lib/telemetry.ts holds the whitelist.
+func (a *App) LogEvent(level, event string, attributes map[string]string) {
+	attrs := make(map[string]interface{}, len(attributes)+1)
+	for k, v := range attributes {
+		attrs[k] = v
+	}
+	attrs["source"] = "frontend"
+
+	switch strings.ToLower(level) {
+	case "error":
+		telemetry.LogError(event, attrs)
+	case "warn":
+		telemetry.Log(telemetry.SeverityWarn, event, attrs)
+	default:
+		telemetry.LogInfo(event, attrs)
+	}
 }
