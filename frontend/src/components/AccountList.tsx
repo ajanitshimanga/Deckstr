@@ -19,6 +19,7 @@ import { cn } from '../lib/utils'
 import { models, providers } from '../../wailsjs/go/models'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 import { SettingsModal } from './SettingsModal'
+import { AddAccountWizard } from './AddAccountWizard'
 
 // Rank tier ordering for sorting (higher = better)
 const TIER_ORDER: Record<string, number> = {
@@ -610,14 +611,16 @@ export function AccountList() {
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
-      {(showAddModal || editingAccount) && (
+      {/* Add flow — progressive-disclosure wizard */}
+      {showAddModal && (
+        <AddAccountWizard onClose={() => setShowAddModal(false)} />
+      )}
+
+      {/* Edit flow — one-page form (user already knows the fields) */}
+      {editingAccount && (
         <AccountModal
           account={editingAccount}
-          onClose={() => {
-            setShowAddModal(false)
-            setEditingAccount(null)
-          }}
+          onClose={() => setEditingAccount(null)}
         />
       )}
 
