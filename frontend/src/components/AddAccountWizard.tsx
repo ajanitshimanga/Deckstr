@@ -8,6 +8,7 @@ import {
   Crosshair,
   Sparkles,
   Flame,
+  Plus,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
@@ -102,12 +103,6 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   const submit = async () => {
     setSubmitting(true)
     try {
-      const selectedNetwork = gameNetworks.find((n) => n.id === data.networkId)
-      // Default games to all games in the selected network if none picked
-      const games =
-        data.games.length > 0
-          ? data.games
-          : selectedNetwork?.games.map((g) => g.id) || []
       await addAccount({
         displayName: data.displayName || data.username,
         username: data.username,
@@ -117,7 +112,7 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
         notes: data.notes,
         riotId: data.riotId,
         region: data.region,
-        games,
+        games: data.games,
         cachedRanks: [],
       })
       onClose()
@@ -129,6 +124,15 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   const update = <K extends keyof WizardData>(key: K, value: WizardData[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
 
+  // Picking a network pre-selects all its games (opt-out UX > opt-in).
+  // Switching to a different network resets to that network's full set.
+  const selectNetwork = (network: models.GameNetwork) =>
+    setData((prev) =>
+      prev.networkId === network.id
+        ? prev
+        : { ...prev, networkId: network.id, games: network.games.map((g) => g.id) },
+    )
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
       <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
@@ -137,7 +141,7 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
         <div className="p-3 sm:p-4 overflow-y-auto flex-1 space-y-3 sm:space-y-4">
           {step === 'identity' && <IdentityStep data={data} update={update} />}
           {step === 'network' && (
-            <NetworkStep data={data} update={update} networks={gameNetworks} />
+            <NetworkStep data={data} onSelectNetwork={selectNetwork} networks={gameNetworks} />
           )}
           {step === 'details' && (
             <DetailsStep data={data} update={update} networks={gameNetworks} />
@@ -236,7 +240,7 @@ function IdentityStep({
       </Field>
       <Field label="Password" required>
         <input
-          type="text"
+          type="password"
           value={data.password}
           onChange={(e) => update('password', e.target.value)}
           placeholder="Enter password"
@@ -258,11 +262,11 @@ function IdentityStep({
 
 function NetworkStep({
   data,
-  update,
+  onSelectNetwork,
   networks,
 }: {
   data: WizardData
-  update: <K extends keyof WizardData>(key: K, value: WizardData[K]) => void
+  onSelectNetwork: (network: models.GameNetwork) => void
   networks: models.GameNetwork[]
 }) {
   const [query, setQuery] = useState('')
@@ -300,7 +304,7 @@ function NetworkStep({
             <Tile
               key={n.id}
               selected={data.networkId === n.id}
-              onClick={() => update('networkId', n.id)}
+              onClick={() => onSelectNetwork(n)}
               visual={NETWORK_VISUAL[n.id] || DEFAULT_VISUAL}
               title={n.name}
               subtitle={`${n.games.length} game${n.games.length === 1 ? '' : 's'}`}
@@ -321,12 +325,31 @@ function DetailsStep({
   update: <K extends keyof WizardData>(key: K, value: WizardData[K]) => void
   networks: models.GameNetwork[]
 }) {
+  const { tags: availableTags, createTag } = useAppStore()
   const network = networks.find((n) => n.id === data.networkId)
   const [gameQuery, setGameQuery] = useState('')
+  const [newTag, setNewTag] = useState('')
   const filteredGames = useMemo(
     () => (network?.games || []).filter((g) => fuzzyMatch(gameQuery, g.name) || fuzzyMatch(gameQuery, g.id)),
     [network, gameQuery],
   )
+
+  const toggleTag = (tag: string) => {
+    const has = data.tags.includes(tag)
+    update('tags', has ? data.tags.filter((t) => t !== tag) : [...data.tags, tag])
+  }
+
+  const addNewTag = async () => {
+    const trimmed = newTag.trim()
+    if (!trimmed) return
+    if (!availableTags.includes(trimmed)) {
+      await createTag(trimmed)
+    }
+    if (!data.tags.includes(trimmed)) {
+      update('tags', [...data.tags, trimmed])
+    }
+    setNewTag('')
+  }
 
   const inputClass = cn(
     'w-full px-2.5 sm:px-3 py-2 rounded-lg sm:rounded-xl text-sm',
@@ -368,7 +391,7 @@ function DetailsStep({
             ))}
           </div>
           <p className="text-[11px] text-[var(--color-muted-foreground)] mt-1.5">
-            Leave empty to include all games on this network.
+            All games selected by default — deselect any you don't play.
           </p>
         </Field>
       )}
@@ -405,6 +428,64 @@ function DetailsStep({
           </Field>
         </>
       )}
+
+      <Field label="Tags">
+        {availableTags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {availableTags.map((tag) => {
+              const selected = data.tags.includes(tag)
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  aria-pressed={selected}
+                  className={cn(
+                    'px-2.5 py-1 rounded-full text-xs font-medium border transition-all',
+                    'flex items-center gap-1 active:scale-[0.97]',
+                    selected
+                      ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-sm'
+                      : 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)] border-[var(--color-border)] hover:text-[var(--color-foreground)] hover:border-[var(--color-muted-foreground)]/40',
+                  )}
+                >
+                  {selected && <Check className="w-3 h-3" />}
+                  {tag}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addNewTag()
+              }
+            }}
+            placeholder="Create a new tag"
+            aria-label="Create a new tag"
+            className={cn(inputClass, 'flex-1')}
+          />
+          <button
+            type="button"
+            onClick={addNewTag}
+            disabled={!newTag.trim()}
+            className={cn(
+              'px-3 rounded-lg sm:rounded-xl text-sm font-medium transition-colors',
+              'bg-[var(--color-muted)] hover:bg-[var(--color-border)]',
+              'text-[var(--color-foreground)] flex items-center gap-1',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+            )}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+        </div>
+      </Field>
 
       <Field label="Notes">
         <textarea
