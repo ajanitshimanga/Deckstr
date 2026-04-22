@@ -100,6 +100,7 @@ export function AccountList() {
   const [selectedGame, setSelectedGame] = useState<string | null>(null)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [deletingAccount, setDeletingAccount] = useState<models.Account | null>(null)
 
   // Filter by game then sort accounts
   const accounts = useMemo(() => {
@@ -169,10 +170,10 @@ export function AccountList() {
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Are you sure you want to delete this account?')) {
-      await removeAccount(id)
-    }
+  const confirmDelete = async () => {
+    if (!deletingAccount) return
+    await removeAccount(deletingAccount.id)
+    setDeletingAccount(null)
   }
 
   const getRankForGame = (account: models.Account, gameId: string) => {
@@ -480,7 +481,7 @@ export function AccountList() {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(account.id)}
+                          onClick={() => setDeletingAccount(account)}
                           className="p-2 rounded-lg text-[var(--color-muted-foreground)] hover:text-red-400 hover:bg-red-500/10 transition-colors duration-150"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -617,6 +618,15 @@ export function AccountList() {
             setShowAddModal(false)
             setEditingAccount(null)
           }}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingAccount && (
+        <DeleteAccountModal
+          account={deletingAccount}
+          onCancel={() => setDeletingAccount(null)}
+          onConfirm={confirmDelete}
         />
       )}
 
@@ -1187,6 +1197,75 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
               {loading ? 'Saving...' : (account ? 'Save' : 'Add')}
             </button>
           </div>
+      </div>
+    </div>
+  )
+}
+
+// Delete confirmation modal — in-app replacement for window.confirm()
+export function DeleteAccountModal({
+  account,
+  onCancel,
+  onConfirm,
+}: {
+  account: models.Account
+  onCancel: () => void
+  onConfirm: () => void | Promise<void>
+}) {
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirm = async () => {
+    setLoading(true)
+    try {
+      await onConfirm()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const label = account.displayName || account.username
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
+      <div className="w-full max-w-[95%] sm:max-w-sm bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl flex flex-col">
+        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] shrink-0 flex items-center gap-2 sm:gap-3">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+            <Trash2 className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-red-400" />
+          </div>
+          <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+            Delete account?
+          </h2>
+        </div>
+
+        <div className="p-3 sm:p-4 text-sm text-[var(--color-muted-foreground)] space-y-2">
+          <p>
+            This will permanently delete{' '}
+            <span className="text-[var(--color-foreground)] font-medium">{label}</span>{' '}
+            from your vault. This cannot be undone.
+          </p>
+        </div>
+
+        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={loading}
+            className={cn(
+              'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors text-white',
+              'bg-red-500 hover:bg-red-500/90 disabled:opacity-50 disabled:cursor-not-allowed',
+            )}
+          >
+            {loading ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
       </div>
     </div>
   )
