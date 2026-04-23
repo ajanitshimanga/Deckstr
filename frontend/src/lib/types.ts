@@ -31,4 +31,7 @@ export interface AccountInput {
   cachedRanks?: models.CachedRank[]
   topMasteries?: models.ChampionMastery[]
   puuid?: string
+  // Custom network fields (networkId === 'custom')
+  customNetwork?: string
+  customGame?: string
 }

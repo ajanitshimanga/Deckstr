@@ -72,6 +72,12 @@ type Account struct {
 	// Game filters - which games this account is used for
 	Games []string `json:"games,omitempty"` // e.g., ["lol", "tft", "valorant"]
 
+	// Custom network fields - populated when NetworkID == "custom" so users
+	// can label platforms we don't have first-class support for (Steam, Epic,
+	// Battle.net, etc.) without needing a code change.
+	CustomNetwork string `json:"customNetwork,omitempty"` // e.g., "Steam"
+	CustomGame    string `json:"customGame,omitempty"`    // e.g., "Counter-Strike 2"
+
 	// Cached rank data (persists even when not signed in)
 	CachedRanks []CachedRank `json:"cachedRanks,omitempty"`
 

@@ -92,6 +92,12 @@ export function AccountList() {
   } = useAppStore()
 
   const unfilteredAccounts = filteredAccounts()
+  // Surface "Custom" in the network filter only when at least one account uses it —
+  // keeps the picker clean for users who haven't added custom networks yet.
+  const hasCustomAccounts = useMemo(
+    () => allAccounts.some(a => a.networkId === 'custom'),
+    [allAccounts],
+  )
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingAccount, setEditingAccount] = useState<models.Account | null>(null)
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
@@ -343,6 +349,7 @@ export function AccountList() {
             {gameNetworks.map(network => (
               <option key={network.id} value={network.id}>{network.name}</option>
             ))}
+            {hasCustomAccounts && <option value="custom">Custom</option>}
           </select>
 
           <select
@@ -425,6 +432,12 @@ export function AccountList() {
             <div className="space-y-3 sm:space-y-4">
               {accounts.map(account => {
                 const network = gameNetworks.find(n => n.id === account.networkId)
+                const isCustomNetwork = account.networkId === 'custom'
+                // Custom accounts store their label on the account itself since
+                // the network isn't in gameNetworks.
+                const networkLabel = isCustomNetwork
+                  ? (account.customNetwork || 'Custom')
+                  : network?.name
                 const isPasswordVisible = visiblePasswords.has(account.id)
                 // Check if this account is the currently signed-in one
                 const isActive = activeAccountId === account.id
@@ -470,7 +483,7 @@ export function AccountList() {
                             )}
                           </div>
                           <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] truncate mt-0.5">
-                            {account.riotId || network?.name || 'Gaming Account'}
+                            {account.riotId || networkLabel || 'Gaming Account'}
                           </p>
                         </div>
                       </div>
@@ -535,7 +548,7 @@ export function AccountList() {
                     </div>
 
                     {/* Tags & Games */}
-                    {(account.tags.length > 0 || (account.games && account.games.length > 0)) && (
+                    {(account.tags.length > 0 || (account.games && account.games.length > 0) || account.customGame) && (
                       <div className="flex items-center gap-2 mt-3 flex-wrap">
                         {account.games && account.games.map(gameId => (
                           <span
@@ -550,6 +563,11 @@ export function AccountList() {
                             {gameId === 'lol' ? 'League' : gameId === 'tft' ? 'TFT' : 'Valorant'}
                           </span>
                         ))}
+                        {isCustomNetwork && account.customGame && (
+                          <span className="px-2.5 py-1 text-xs rounded-md font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">
+                            {account.customGame}
+                          </span>
+                        )}
                         {account.tags.map(tag => (
                           <span
                             key={tag}
@@ -904,6 +922,8 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
     riotId: account?.riotId || '',
     region: account?.region || 'na1',
     games: account?.games || ['lol', 'tft'],
+    customNetwork: account?.customNetwork || '',
+    customGame: account?.customGame || '',
   })
   const [newTag, setNewTag] = useState('')
   const [loading, setLoading] = useState(false)
@@ -1022,7 +1042,17 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
             </label>
             <select
               value={formData.networkId}
-              onChange={(e) => setFormData(prev => ({ ...prev, networkId: e.target.value }))}
+              onChange={(e) => {
+                const next = e.target.value
+                setFormData(prev => ({
+                  ...prev,
+                  networkId: next,
+                  // Drop the other network's fields so we don't persist stale data
+                  ...(next === 'custom'
+                    ? { riotId: '', region: 'na1', games: [] }
+                    : { customNetwork: '', customGame: '' }),
+                }))
+              }}
               className={cn(
                 'w-full px-2.5 sm:px-3 py-2 rounded-lg sm:rounded-xl text-sm',
                 'bg-[var(--color-muted)] border border-[var(--color-border)]',
@@ -1033,8 +1063,50 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
               {gameNetworks.map(network => (
                 <option key={network.id} value={network.id}>{network.name}</option>
               ))}
+              <option value="custom">Custom</option>
             </select>
           </div>
+
+          {/* Custom network fields */}
+          {formData.networkId === 'custom' && (
+            <>
+              <div className="space-y-1.5 sm:space-y-2">
+                <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                  Network name *
+                </label>
+                <input
+                  type="text"
+                  value={formData.customNetwork}
+                  onChange={(e) => setFormData(prev => ({ ...prev, customNetwork: e.target.value }))}
+                  placeholder="e.g. Steam, Epic Games, Battle.net"
+                  required
+                  className={cn(
+                    'w-full px-2.5 sm:px-3 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                />
+              </div>
+              <div className="space-y-1.5 sm:space-y-2">
+                <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
+                  Game
+                </label>
+                <input
+                  type="text"
+                  value={formData.customGame}
+                  onChange={(e) => setFormData(prev => ({ ...prev, customGame: e.target.value }))}
+                  placeholder="Optional — e.g. CS2, Apex Legends"
+                  className={cn(
+                    'w-full px-2.5 sm:px-3 py-2 rounded-lg sm:rounded-xl text-sm',
+                    'bg-[var(--color-muted)] border border-[var(--color-border)]',
+                    'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+                    'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+                  )}
+                />
+              </div>
+            </>
+          )}
 
           {/* Riot-specific fields - Responsive */}
           {formData.networkId === 'riot' && (
@@ -1190,7 +1262,12 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
             <button
               type="submit"
               form="account-modal-form"
-              disabled={loading || !formData.username || !formData.password}
+              disabled={
+                loading ||
+                !formData.username ||
+                !formData.password ||
+                (formData.networkId === 'custom' && !formData.customNetwork.trim())
+              }
               className={cn(
                 'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
                 'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
