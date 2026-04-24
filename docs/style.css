@@ -43,6 +43,44 @@ main {
   flex-direction: column;
   align-items: center;
   gap: 28px;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- Backdrop screenshot ---------------------------------------- */
+
+/* Ghosted dashboard peeking from the left edge — gives the page a sense
+   of "here's what you're downloading" without competing with the CTA.
+   Fades out toward the center so content stays legible. Hidden on narrow
+   viewports where it would crowd the hero. */
+
+.backdrop {
+  position: fixed;
+  top: 50%;
+  left: 4vw;
+  transform: translateY(-50%);
+  max-width: 52vw;
+  max-height: 92vh;
+  opacity: 0.9;
+  pointer-events: none;
+  z-index: 0;
+  filter: saturate(0.85);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.95) 0%,
+    rgba(0, 0, 0, 0.75) 40%,
+    rgba(0, 0, 0, 0) 95%
+  );
+  mask-image: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.95) 0%,
+    rgba(0, 0, 0, 0.75) 40%,
+    rgba(0, 0, 0, 0) 95%
+  );
+}
+
+@media (max-width: 900px) {
+  .backdrop { display: none; }
 }
 
 /* --- Logo ------------------------------------------------------- */
