@@ -40,6 +40,15 @@ type GameNetwork struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Games []Game `json:"games"`
+
+	// SharedAccount is true when one login spans every game on the network —
+	// e.g. a Riot account is always LoL + TFT + Valorant; Battle.net works
+	// the same way across WoW/Diablo/Overwatch. When true, picking any one
+	// game implicitly grants access to its siblings, and the wizard auto-tags
+	// new accounts with the full game list rather than asking the user to
+	// opt in game-by-game. Storefronts like Steam/Epic stay false because
+	// each title there is a separate purchase.
+	SharedAccount bool `json:"sharedAccount,omitempty"`
 }
 
 // Game represents a specific game within a network
@@ -196,13 +205,23 @@ type Settings struct {
 	DefaultRegion string `json:"defaultRegion,omitempty"` // e.g., "na1", "euw1"
 }
 
+// Rocket League process names are shared between the Epic and Steam editions —
+// Psyonix ships the same executable on both storefronts. Keep them in one place
+// so the Epic/Steam network entries below stay in sync.
+var rocketLeagueGameProcesses = PlatformProcesses{
+	Windows: []string{"RocketLeague.exe"},
+	// macOS/Linux: Psyonix dropped native builds in 2020; no native process
+	// names to watch.
+}
+
 // DefaultGameNetworks returns pre-populated game networks with platform-specific process names
 // Only native ports are defined - empty means game doesn't exist on that platform
 func DefaultGameNetworks() []GameNetwork {
 	return []GameNetwork{
 		{
-			ID:   "riot",
-			Name: "Riot Games",
+			ID:            "riot",
+			Name:          "Riot Games",
+			SharedAccount: true,
 			Games: []Game{
 				{
 					ID:        "lol",
@@ -251,6 +270,44 @@ func DefaultGameNetworks() []GameNetwork {
 						MacOS:   []string{"League of Legends"},
 						// Linux: no native client
 					},
+				},
+			},
+		},
+		{
+			ID:   "epic",
+			Name: "Epic Games",
+			Games: []Game{
+				{
+					ID:        "rl",
+					Name:      "Rocket League",
+					NetworkID: "epic",
+					// The Epic launcher is the persistent "signed in" surface —
+					// there's no Rocket-League-specific client like LeagueClient.
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"EpicGamesLauncher.exe"},
+						MacOS:   []string{"Epic Games Launcher"},
+						// Linux: no native Epic launcher
+					},
+					ClientTitle:   "Epic Games Launcher",
+					GameProcesses: rocketLeagueGameProcesses,
+				},
+			},
+		},
+		{
+			ID:   "steam",
+			Name: "Steam",
+			Games: []Game{
+				{
+					ID:        "rl",
+					Name:      "Rocket League",
+					NetworkID: "steam",
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"steam.exe"},
+						MacOS:   []string{"steam_osx", "Steam"},
+						Linux:   []string{"steam"},
+					},
+					ClientTitle:   "Steam",
+					GameProcesses: rocketLeagueGameProcesses,
 				},
 			},
 		},

@@ -10,31 +10,39 @@ import {
   Flame,
   Plus,
   Puzzle,
+  Rocket,
+  Store,
+  Gamepad,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { cn } from '../lib/utils'
+import { buildGamesCatalog, type CatalogGame } from '../lib/catalog'
 import { MOTION_BASE, MOTION_FOCUS } from '../lib/motion'
 import { Button } from './ui/Button'
-import { Modal, ModalBody, ModalFooter, ModalHeader } from './ui/Modal'
+import { Modal, ModalBody, ModalFooter } from './ui/Modal'
 import { models } from '../../wailsjs/go/models'
 
 // Progressive-disclosure add-account wizard.
 // Step 1: Identity (username, password, optional display name)
-// Step 2: Network picker (visual tiles + fuzzy search)
-// Step 3: Network-specific details (all optional — sensible defaults let users
-//         skip straight to Save)
+// Step 2: Game (pick the game first — what players actually think about)
+// Step 3: Network (only when the chosen game ships on 2+ stores, e.g. RL on
+//         Epic + Steam — multi-select. Skipped for single-store games.)
+// Step 4: Details (tags, notes, Riot ID/region for Riot games — all optional)
 
-type Step = 'identity' | 'network' | 'details'
+type Step = 'identity' | 'game' | 'network' | 'details'
 
-const STEPS: Step[] = ['identity', 'network', 'details']
-
-// Sentinel for user-defined networks we don't have first-class support for
-// (Steam, Epic, Battle.net, etc.). The user provides a label in step 3.
+// Sentinel for user-defined games we don't have first-class support for.
+// Picking "Custom" on the game step routes straight to the details step where
+// the user labels their own game + storefront.
+export const CUSTOM_GAME_ID = 'custom'
+// Backwards-compatible alias — the storage layer still stores NetworkID="custom".
 export const CUSTOM_NETWORK_ID = 'custom'
 
 const NETWORK_VISUAL: Record<string, { icon: LucideIcon; color: string }> = {
   riot: { icon: Flame, color: 'text-red-400 bg-red-500/10 border-red-500/30' },
+  epic: { icon: Store, color: 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/30' },
+  steam: { icon: Gamepad, color: 'text-sky-300 bg-sky-500/10 border-sky-500/30' },
   [CUSTOM_NETWORK_ID]: {
     icon: Puzzle,
     color: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
@@ -45,6 +53,11 @@ const GAME_VISUAL: Record<string, { icon: LucideIcon; color: string }> = {
   lol: { icon: Swords, color: 'text-blue-300 bg-blue-500/10 border-blue-500/30' },
   tft: { icon: Sparkles, color: 'text-purple-300 bg-purple-500/10 border-purple-500/30' },
   valorant: { icon: Crosshair, color: 'text-rose-300 bg-rose-500/10 border-rose-500/30' },
+  rl: { icon: Rocket, color: 'text-orange-300 bg-orange-500/10 border-orange-500/30' },
+  [CUSTOM_GAME_ID]: {
+    icon: Puzzle,
+    color: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
+  },
 }
 
 const DEFAULT_VISUAL = { icon: Gamepad2, color: 'text-[var(--color-muted-foreground)] bg-[var(--color-muted)] border-[var(--color-border)]' }
@@ -66,12 +79,17 @@ type WizardData = {
   displayName: string
   username: string
   password: string
-  networkId: string
+  gameId: string                // '', a real game id, or CUSTOM_GAME_ID
+  // The single storefront this account lives on. Single-store games auto-fill
+  // this on game pick; multi-store games leave it blank so the user has to
+  // explicitly choose one (Epic OR Steam — different credentials, different
+  // surfaces, so we never bundle them into one record).
+  selectedNetwork: string
   tags: string[]
   notes: string
   riotId: string
   region: string
-  games: string[]
+  alsoPlaysGames: string[]      // sibling games on the same network this account also covers
   customNetwork: string
   customGame: string
 }
@@ -80,34 +98,66 @@ const EMPTY: WizardData = {
   displayName: '',
   username: '',
   password: '',
-  networkId: '',
+  gameId: '',
+  selectedNetwork: '',
   tags: [],
   notes: '',
   riotId: '',
   region: 'na1',
-  games: [],
+  alsoPlaysGames: [],
   customNetwork: '',
   customGame: '',
 }
 
-export function AddAccountWizard({ onClose }: { onClose: () => void }) {
+// stepsFor decides which steps are visible given the current game choice.
+// Single-store games (Valorant, LoL) skip the network step entirely;
+// Custom skips it because the user types their own network label on details.
+function stepsFor(data: WizardData, catalog: CatalogGame[]): Step[] {
+  const steps: Step[] = ['identity', 'game']
+  if (data.gameId && data.gameId !== CUSTOM_GAME_ID) {
+    const game = catalog.find((g) => g.id === data.gameId)
+    if (game && game.networks.length >= 2) steps.push('network')
+  }
+  steps.push('details')
+  return steps
+}
+
+export function AddAccountWizard({
+  onClose,
+  sticky = false,
+}: {
+  onClose: () => void
+  // sticky disables backdrop + Esc dismissal so a misclick can't tear the
+  // user out of an unfinished flow. The Cancel button stays as the explicit
+  // exit. Use during first-account onboarding.
+  sticky?: boolean
+}) {
   const { gameNetworks, addAccount } = useAppStore()
+  const catalog = useMemo(() => buildGamesCatalog(gameNetworks), [gameNetworks])
   const [step, setStep] = useState<Step>('identity')
   const [data, setData] = useState<WizardData>(EMPTY)
   const [submitting, setSubmitting] = useState(false)
 
-  const stepIndex = STEPS.indexOf(step)
-  // Custom network needs a user-provided name before submission — otherwise
+  const steps = useMemo(() => stepsFor(data, catalog), [data, catalog])
+  const stepIndex = Math.max(0, steps.indexOf(step))
+  const isCustom = data.gameId === CUSTOM_GAME_ID
+  const selectedGame = catalog.find((g) => g.id === data.gameId)
+
+  // Custom needs a user-provided network name before submission — otherwise
   // the account would show up as a nameless "Custom" in the list.
   const customReady =
-    data.networkId !== CUSTOM_NETWORK_ID || data.customNetwork.trim().length > 0
+    !isCustom || data.customNetwork.trim().length > 0
+  const networksReady =
+    !steps.includes('network') || data.selectedNetwork.length > 0
+
   const canAdvance =
     (step === 'identity' && data.username.length > 0 && data.password.length > 0) ||
-    (step === 'network' && data.networkId.length > 0) ||
-    (step === 'details' && customReady)
+    (step === 'game' && data.gameId.length > 0) ||
+    (step === 'network' && data.selectedNetwork.length > 0) ||
+    (step === 'details' && customReady && networksReady)
 
   const goBack = () => {
-    if (stepIndex > 0) setStep(STEPS[stepIndex - 1])
+    if (stepIndex > 0) setStep(steps[stepIndex - 1])
     else onClose()
   }
 
@@ -117,28 +167,48 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
       submit()
       return
     }
-    setStep(STEPS[stepIndex + 1])
+    setStep(steps[stepIndex + 1])
   }
 
   const submit = async () => {
     setSubmitting(true)
     try {
-      const isCustom = data.networkId === CUSTOM_NETWORK_ID
-      await addAccount({
-        displayName: data.displayName || data.username,
-        username: data.username,
-        password: data.password,
-        networkId: data.networkId,
-        tags: data.tags,
-        notes: data.notes,
-        // Riot fields only meaningful for the Riot network
-        riotId: isCustom ? '' : data.riotId,
-        region: isCustom ? '' : data.region,
-        games: isCustom ? [] : data.games,
-        customNetwork: isCustom ? data.customNetwork.trim() : '',
-        customGame: isCustom ? data.customGame.trim() : '',
-        cachedRanks: [],
-      })
+      if (isCustom) {
+        await addAccount({
+          displayName: data.displayName || data.username,
+          username: data.username,
+          password: data.password,
+          networkId: CUSTOM_NETWORK_ID,
+          tags: data.tags,
+          notes: data.notes,
+          riotId: '',
+          region: '',
+          games: [],
+          customNetwork: data.customNetwork.trim(),
+          customGame: data.customGame.trim(),
+          cachedRanks: [],
+        })
+      } else {
+        // One record per pick — multi-store games (Rocket League on Epic vs
+        // Steam) require the user to run the wizard again for the second
+        // store, since each storefront uses different credentials.
+        const games = uniqueGames(data.gameId, data.alsoPlaysGames)
+        const networkId = data.selectedNetwork
+        await addAccount({
+          displayName: data.displayName || data.username,
+          username: data.username,
+          password: data.password,
+          networkId,
+          tags: data.tags,
+          notes: data.notes,
+          riotId: networkId === 'riot' ? data.riotId : '',
+          region: networkId === 'riot' ? data.region : '',
+          games,
+          customNetwork: '',
+          customGame: '',
+          cachedRanks: [],
+        })
+      }
       onClose()
     } finally {
       setSubmitting(false)
@@ -148,45 +218,78 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   const update = <K extends keyof WizardData>(key: K, value: WizardData[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
 
-  // Picking a network pre-selects all its games (opt-out UX > opt-in).
-  // Switching to a different network resets to that network's full set and
-  // clears any previously-entered custom-network fields.
-  const selectNetwork = (network: models.GameNetwork) =>
+  // Picking a game pre-fills the network only when there's exactly one option
+  // (single-store games like LoL) so the network step can be skipped. For
+  // multi-store games (Rocket League on Epic + Steam) we leave selectedNetwork
+  // blank — the user must explicitly pick a storefront because they're
+  // separate accounts with separate credentials.
+  //
+  // If the chosen network has SharedAccount=true (Riot), every sibling game
+  // on that network is auto-tagged: a Riot login always covers LoL + TFT +
+  // Valorant, so it would be wrong to ask the user to opt in. The DetailsStep
+  // surfaces this as an informational note rather than interactive tiles.
+  const selectGame = (game: CatalogGame) =>
     setData((prev) =>
-      prev.networkId === network.id
+      prev.gameId === game.id
         ? prev
         : {
             ...prev,
-            networkId: network.id,
-            games: network.games.map((g) => g.id),
+            gameId: game.id,
+            selectedNetwork: game.networks.length === 1 ? game.networks[0].id : '',
+            alsoPlaysGames: linkedSiblings(game, gameNetworks),
             customNetwork: '',
             customGame: '',
           },
     )
 
-  // Custom path — no pre-selected games because we don't know what the
-  // network offers. User fills in the label on step 3.
-  const selectCustom = () =>
+  const selectCustomGame = () =>
     setData((prev) =>
-      prev.networkId === CUSTOM_NETWORK_ID ? prev : { ...prev, networkId: CUSTOM_NETWORK_ID, games: [] },
+      prev.gameId === CUSTOM_GAME_ID
+        ? prev
+        : {
+            ...prev,
+            gameId: CUSTOM_GAME_ID,
+            selectedNetwork: CUSTOM_NETWORK_ID,
+            alsoPlaysGames: [],
+          },
     )
 
+  const pickNetwork = (networkId: string) =>
+    setData((prev) => ({ ...prev, selectedNetwork: networkId }))
+
   return (
-    <Modal onClose={onClose} size="md">
-      <WizardHeader step={step} isCustom={data.networkId === CUSTOM_NETWORK_ID} />
+    <Modal
+      onClose={onClose}
+      size="md"
+      dismissOnBackdrop={!sticky}
+      dismissOnEsc={!sticky}
+    >
+      <WizardHeader step={step} steps={steps} isCustom={isCustom} />
 
       <ModalBody className="space-y-3 sm:space-y-4">
         {step === 'identity' && <IdentityStep data={data} update={update} />}
-        {step === 'network' && (
+        {step === 'game' && (
+          <GameStep
+            data={data}
+            catalog={catalog}
+            onSelectGame={selectGame}
+            onSelectCustom={selectCustomGame}
+          />
+        )}
+        {step === 'network' && selectedGame && (
           <NetworkStep
             data={data}
-            onSelectNetwork={selectNetwork}
-            onSelectCustom={selectCustom}
-            networks={gameNetworks}
+            game={selectedGame}
+            onPickNetwork={pickNetwork}
           />
         )}
         {step === 'details' && (
-          <DetailsStep data={data} update={update} networks={gameNetworks} />
+          <DetailsStep
+            data={data}
+            update={update}
+            catalog={catalog}
+            networks={gameNetworks}
+          />
         )}
       </ModalBody>
 
@@ -213,17 +316,49 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   )
 }
 
-function WizardHeader({ step, isCustom }: { step: Step; isCustom: boolean }) {
+function uniqueGames(primary: string, also: string[]): string[] {
+  const set = new Set<string>([primary, ...also])
+  return Array.from(set)
+}
+
+// linkedSiblings returns the sibling games that share a login with the given
+// game — i.e. games on a SharedAccount network the chosen game lives on.
+// Used to default-tag an account with every game its credentials grant access
+// to (Riot LoL pick → also TFT + Valorant). Returns [] for storefronts where
+// each game is a separate purchase.
+function linkedSiblings(game: CatalogGame, networks: models.GameNetwork[]): string[] {
+  const linked = new Set<string>()
+  for (const cn of game.networks) {
+    if (!cn.sharedAccount) continue
+    const network = networks.find((n) => n.id === cn.id)
+    if (!network) continue
+    for (const g of network.games) {
+      if (g.id !== game.id) linked.add(g.id)
+    }
+  }
+  return Array.from(linked)
+}
+
+function WizardHeader({
+  step,
+  steps,
+  isCustom,
+}: {
+  step: Step
+  steps: Step[]
+  isCustom: boolean
+}) {
   const titles: Record<Step, { title: string; subtitle: string }> = {
     identity: { title: 'Add Account', subtitle: 'Start with your sign-in credentials' },
-    network: { title: 'Choose Network', subtitle: 'Which platform is this account for?' },
+    game: { title: 'Choose Game', subtitle: 'What are you playing?' },
+    network: { title: 'Choose Storefront', subtitle: 'Where do you play this game?' },
     details: {
       title: 'Finishing Touches',
       subtitle: isCustom ? 'Name your platform and you\'re done' : 'All optional — skip to save',
     },
   }
   const { title, subtitle } = titles[step]
-  const stepIndex = STEPS.indexOf(step)
+  const stepIndex = Math.max(0, steps.indexOf(step))
 
   return (
     <div className="p-3 sm:p-4 border-b border-[var(--color-border)] shrink-0">
@@ -235,11 +370,11 @@ function WizardHeader({ step, isCustom }: { step: Step; isCustom: boolean }) {
           <p className="text-xs text-[var(--color-muted-foreground)] truncate">{subtitle}</p>
         </div>
         <span className="text-[10px] sm:text-xs font-medium text-[var(--color-muted-foreground)] shrink-0">
-          Step {stepIndex + 1} of {STEPS.length}
+          Step {stepIndex + 1} of {steps.length}
         </span>
       </div>
       <div className="flex gap-1.5">
-        {STEPS.map((s, i) => (
+        {steps.map((s, i) => (
           <div
             key={s}
             className={cn(
@@ -300,25 +435,24 @@ function IdentityStep({
   )
 }
 
-function NetworkStep({
+function GameStep({
   data,
-  onSelectNetwork,
+  catalog,
+  onSelectGame,
   onSelectCustom,
-  networks,
 }: {
   data: WizardData
-  onSelectNetwork: (network: models.GameNetwork) => void
+  catalog: CatalogGame[]
+  onSelectGame: (game: CatalogGame) => void
   onSelectCustom: () => void
-  networks: models.GameNetwork[]
 }) {
   const [query, setQuery] = useState('')
   const filtered = useMemo(
-    () => networks.filter((n) => fuzzyMatch(query, n.name) || fuzzyMatch(query, n.id)),
-    [networks, query],
+    () => catalog.filter((g) => fuzzyMatch(query, g.name) || fuzzyMatch(query, g.id)),
+    [catalog, query],
   )
-  // The Custom tile is the escape hatch for platforms we don't cover — show it
-  // whenever the query is empty or fuzzy-matches "custom"/"other" so it stays
-  // discoverable, especially when no real networks match.
+  // The Custom tile is the escape hatch for games we don't catalog — keep it
+  // discoverable even when the search filters real games out.
   const q = query.trim().toLowerCase()
   const showCustom =
     q.length === 0 ||
@@ -334,8 +468,8 @@ function NetworkStep({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search networks"
-          aria-label="Search networks"
+          placeholder="Search games"
+          aria-label="Search games"
           className={cn(
             'w-full pl-9 pr-3 py-2 rounded-lg sm:rounded-xl text-sm',
             'bg-[var(--color-muted)] border border-[var(--color-border)]',
@@ -346,23 +480,27 @@ function NetworkStep({
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3">
-        {filtered.map((n) => (
+        {filtered.map((g) => (
           <Tile
-            key={n.id}
-            selected={data.networkId === n.id}
-            onClick={() => onSelectNetwork(n)}
-            visual={NETWORK_VISUAL[n.id] || DEFAULT_VISUAL}
-            title={n.name}
-            subtitle={`${n.games.length} game${n.games.length === 1 ? '' : 's'}`}
+            key={g.id}
+            selected={data.gameId === g.id}
+            onClick={() => onSelectGame(g)}
+            visual={GAME_VISUAL[g.id] || DEFAULT_VISUAL}
+            title={g.name}
+            subtitle={
+              g.networks.length === 1
+                ? g.networks[0].name
+                : `${g.networks.length} stores`
+            }
           />
         ))}
         {showCustom && (
           <Tile
-            selected={data.networkId === CUSTOM_NETWORK_ID}
+            selected={data.gameId === CUSTOM_GAME_ID}
             onClick={onSelectCustom}
-            visual={NETWORK_VISUAL[CUSTOM_NETWORK_ID]}
+            visual={GAME_VISUAL[CUSTOM_GAME_ID]}
             title="Custom"
-            subtitle="Not listed? Name your own"
+            subtitle="Not listed? Add your own"
           />
         )}
       </div>
@@ -376,28 +514,95 @@ function NetworkStep({
   )
 }
 
+function NetworkStep({
+  data,
+  game,
+  onPickNetwork,
+}: {
+  data: WizardData
+  game: CatalogGame
+  onPickNetwork: (networkId: string) => void
+}) {
+  return (
+    <>
+      <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)]">
+        {game.name} ships on {game.networks.length} storefronts. Pick the one
+        this account is for — each store has its own login, so a second store
+        means a second account (run the wizard again).
+      </p>
+
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+        {game.networks.map((n) => (
+          <Tile
+            key={n.id}
+            selected={data.selectedNetwork === n.id}
+            onClick={() => onPickNetwork(n.id)}
+            visual={NETWORK_VISUAL[n.id] || DEFAULT_VISUAL}
+            title={n.name}
+            subtitle={data.selectedNetwork === n.id ? 'Selected' : 'Tap to pick'}
+          />
+        ))}
+      </div>
+    </>
+  )
+}
+
 function DetailsStep({
   data,
   update,
+  catalog,
   networks,
 }: {
   data: WizardData
   update: <K extends keyof WizardData>(key: K, value: WizardData[K]) => void
+  catalog: CatalogGame[]
   networks: models.GameNetwork[]
 }) {
   const { tags: availableTags, createTag } = useAppStore()
-  const network = networks.find((n) => n.id === data.networkId)
-  const isCustom = data.networkId === CUSTOM_NETWORK_ID
-  const [gameQuery, setGameQuery] = useState('')
+  const isCustom = data.gameId === CUSTOM_GAME_ID
+  const selectedGame = catalog.find((g) => g.id === data.gameId)
+  const showsRiotFields = !isCustom && data.selectedNetwork === 'riot'
+
+  // Two distinct sibling cases:
+  //   - linkedSiblingsInfo: networks where the login spans every game
+  //     (Riot). Read-only — we surface them as an info note because the user
+  //     can't actually un-link an account from a sibling on the same login.
+  //   - optionalSiblings: networks where each game is a separate purchase
+  //     (Steam/Epic). Render as opt-in tiles for users who happen to play
+  //     siblings on the same account.
+  const linkedSiblingsInfo = useMemo(() => {
+    if (isCustom || !selectedGame || !data.selectedNetwork) return [] as { id: string; name: string }[]
+    const cn = selectedGame.networks.find((n) => n.id === data.selectedNetwork)
+    if (!cn || !cn.sharedAccount) return []
+    const network = networks.find((n) => n.id === cn.id)
+    if (!network) return []
+    return network.games
+      .filter((g) => g.id !== selectedGame.id)
+      .map((g) => ({ id: g.id, name: g.name }))
+  }, [isCustom, selectedGame, data.selectedNetwork, networks])
+
+  const optionalSiblings = useMemo(() => {
+    if (isCustom || !selectedGame || !data.selectedNetwork) return []
+    const cn = selectedGame.networks.find((n) => n.id === data.selectedNetwork)
+    if (!cn || cn.sharedAccount) return [] // shared-account siblings shown as info instead
+    const network = networks.find((n) => n.id === cn.id)
+    if (!network) return []
+    return network.games.filter((g) => g.id !== selectedGame.id)
+  }, [isCustom, selectedGame, data.selectedNetwork, networks])
+
   const [newTag, setNewTag] = useState('')
-  const filteredGames = useMemo(
-    () => (network?.games || []).filter((g) => fuzzyMatch(gameQuery, g.name) || fuzzyMatch(gameQuery, g.id)),
-    [network, gameQuery],
-  )
 
   const toggleTag = (tag: string) => {
     const has = data.tags.includes(tag)
     update('tags', has ? data.tags.filter((t) => t !== tag) : [...data.tags, tag])
+  }
+
+  const toggleAlsoPlays = (gameId: string) => {
+    const has = data.alsoPlaysGames.includes(gameId)
+    update(
+      'alsoPlaysGames',
+      has ? data.alsoPlaysGames.filter((g) => g !== gameId) : [...data.alsoPlaysGames, gameId],
+    )
   }
 
   const addNewTag = async () => {
@@ -418,11 +623,6 @@ function DetailsStep({
     'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
     'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]',
   )
-
-  const toggleGame = (gameId: string) => {
-    const has = data.games.includes(gameId)
-    update('games', has ? data.games.filter((g) => g !== gameId) : [...data.games, gameId])
-  }
 
   return (
     <>
@@ -450,38 +650,53 @@ function DetailsStep({
         </>
       )}
 
-      {!isCustom && network && network.games.length > 0 && (
-        <Field label="Games">
-          <div className="relative mb-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
-            <input
-              type="text"
-              value={gameQuery}
-              onChange={(e) => setGameQuery(e.target.value)}
-              placeholder="Search games"
-              aria-label="Search games"
-              className={cn(inputClass, 'pl-9')}
-            />
+      {linkedSiblingsInfo.length > 0 && (
+        <Field label="Linked games">
+          <div
+            role="note"
+            aria-label="Linked games"
+            className={cn(
+              'flex items-start gap-2 px-3 py-2 rounded-lg sm:rounded-xl text-xs',
+              'bg-[var(--color-muted)]/40 border border-[var(--color-border)]',
+              'text-[var(--color-muted-foreground)]',
+            )}
+          >
+            <Check className="w-4 h-4 mt-0.5 text-[var(--color-primary)] shrink-0" />
+            <span>
+              One login covers{' '}
+              <span className="text-[var(--color-foreground)] font-medium">
+                {[selectedGame?.name, ...linkedSiblingsInfo.map((s) => s.name)]
+                  .filter(Boolean)
+                  .join(', ')}
+              </span>
+              {' '}— this account will show up under all of them automatically.
+            </span>
           </div>
+        </Field>
+      )}
+
+      {optionalSiblings.length > 0 && (
+        <Field label="Also plays on this account">
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            {filteredGames.map((g) => (
+            {optionalSiblings.map((g) => (
               <Tile
                 key={g.id}
-                selected={data.games.includes(g.id)}
-                onClick={() => toggleGame(g.id)}
+                selected={data.alsoPlaysGames.includes(g.id)}
+                onClick={() => toggleAlsoPlays(g.id)}
                 visual={GAME_VISUAL[g.id] || DEFAULT_VISUAL}
                 title={g.name}
-                subtitle={data.games.includes(g.id) ? 'Selected' : 'Tap to add'}
+                subtitle={data.alsoPlaysGames.includes(g.id) ? 'Selected' : 'Tap to add'}
               />
             ))}
           </div>
           <p className="text-[11px] text-[var(--color-muted-foreground)] mt-1.5">
-            All games selected by default — deselect any you don't play.
+            Each title on this storefront is a separate purchase — tag the
+            extras you happen to own on the same account.
           </p>
         </Field>
       )}
 
-      {data.networkId === 'riot' && (
+      {showsRiotFields && (
         <>
           <Field label="Riot ID">
             <input
