@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,19 +21,30 @@ const (
 	// user-facing, so renaming it would force a second migration with no UX
 	// benefit.
 	vaultFileName = "vault.osm"
-	vaultVersion  = 1 // Increment when making breaking changes to vault structure
+
+	// vaultVersion is the semantics version new vaults are stamped with. It
+	// changes whenever the cryptographic scheme changes in a way that older
+	// clients cannot safely handle. Migration is handled in migrateVault.
+	//
+	//   v1 — initial release; recovery-phrase verification hash was the same
+	//        bytes as the master-vault-key wrapping key (critical bug, see
+	//        docs/security/recovery-key-derivation.md).
+	//   v2 — recovery scheme derives verify and encrypt keys via HKDF-SHA256
+	//        with domain-separated info labels on top of a single Argon2id
+	//        base step. v1 vaults are migrated on next unlock.
+	vaultVersion = 2
 )
 
-// Migration notes:
-// - v1: Initial release (v1.0.0)
-// - v1 additions (v1.1.0): Added passwordHint field (non-breaking, defaults to empty)
-
 var (
-	ErrVaultNotFound     = errors.New("vault not found")
-	ErrVaultLocked       = errors.New("vault is locked")
-	ErrInvalidPassword   = errors.New("invalid password")
-	ErrInvalidUsername   = errors.New("invalid username")
-	ErrVaultExists       = errors.New("vault already exists")
+	ErrVaultNotFound       = errors.New("vault not found")
+	ErrVaultLocked         = errors.New("vault is locked")
+	ErrInvalidPassword     = errors.New("invalid password")
+	ErrInvalidUsername     = errors.New("invalid username")
+	ErrVaultExists         = errors.New("vault already exists")
+	// ErrUnsupportedVersion is returned when the on-disk vault was written by
+	// a newer build than this one. Forward-compat fence: refusing the load is
+	// safer than letting an old binary silently corrupt newer-format data.
+	ErrUnsupportedVersion = errors.New("vault version is newer than this build supports — update Deckstr")
 )
 
 // StorageService handles encrypted vault operations
@@ -49,11 +61,28 @@ type StorageService struct {
 	salt         []byte
 	vaultData    *models.VaultData
 
+	// createdAt is the original vault creation timestamp, preserved across all
+	// mutations. Populated on Unlock / CreateVault*; any Save/Change path that
+	// overwrote this with time.Now() used to silently reset account history.
+	createdAt time.Time
+
 	// Recovery phrase fields (preserved across saves)
 	recoveryPhraseHash string
 	recoveryPhraseSalt string
 	recoveryKeyNonce   string
 	encryptedVaultKey  string
+
+	// needsRecoveryRotation is set by migrateVault when a v1 vault is loaded.
+	// Unlock consumes the flag after successful master-password decryption
+	// and rotates the recovery scheme to v2 in-place.
+	needsRecoveryRotation bool
+
+	// pendingRotatedPhrase holds the cleartext of a newly-generated recovery
+	// phrase that the frontend has not yet displayed to the user. Set by the
+	// v1→v2 migration in Unlock and consumed exactly once by the frontend
+	// through ConsumePendingRecoveryRotation, which clears it from memory
+	// immediately on read.
+	pendingRotatedPhrase string
 }
 
 // NewStorageService creates a new storage service
@@ -130,6 +159,7 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 	}
 
 	// Create vault structure
+	now := time.Now()
 	vault := models.Vault{
 		Version:       vaultVersion,
 		Username:      username,
@@ -137,8 +167,8 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 		Salt:          crypto.EncodeBase64(salt),
 		Nonce:         crypto.EncodeBase64(nonce),
 		EncryptedData: crypto.EncodeBase64(ciphertext),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	// Save to file
@@ -153,6 +183,7 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = now
 
 	return nil
 }
@@ -218,6 +249,7 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = vault.CreatedAt
 
 	// Preserve recovery phrase fields for Save() operations
 	s.recoveryPhraseHash = vault.RecoveryPhraseHash
@@ -225,7 +257,121 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 	s.recoveryKeyNonce = vault.RecoveryKeyNonce
 	s.encryptedVaultKey = vault.EncryptedVaultKey
 
+	// If the vault was v1, rotate the recovery scheme to v2 before returning.
+	// This path only runs with a correct master password, so we won't rewrite
+	// on a failed unlock. The rotation regenerates the recovery phrase —
+	// the old phrase dies here. Frontend surfaces the new phrase via
+	// ConsumePendingRecoveryRotation.
+	if s.needsRecoveryRotation {
+		if err := s.rotateRecoveryToV2Locked(); err != nil {
+			// Rotation failed — leave the vault on v1 rather than partial
+			// state. User retries on next unlock. We do NOT return this as
+			// an unlock error because the vault IS unlocked; rotation is a
+			// best-effort side effect.
+			s.needsRecoveryRotation = false
+			return fmt.Errorf("vault unlocked but recovery rotation failed (retry on next unlock): %w", err)
+		}
+	}
+
 	return nil
+}
+
+// rotateRecoveryToV2Locked rewrites the vault from the v1 recovery scheme
+// to v2 using a freshly-generated phrase. Caller must hold s.mu for writing
+// and s.derivedKey / s.salt / s.vaultData must already be populated by the
+// just-completed Unlock path.
+//
+// Side effects on success:
+//   - vault.osm is atomically rewritten with Version=2 and new recovery fields
+//   - s.recoveryPhrase* / s.encryptedVaultKey are updated to the new values
+//   - s.pendingRotatedPhrase is set for the frontend to consume
+//   - s.needsRecoveryRotation is cleared
+func (s *StorageService) rotateRecoveryToV2Locked() error {
+	newPhrase, err := s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		return fmt.Errorf("generate phrase: %w", err)
+	}
+	newRecoverySalt, err := s.crypto.GenerateSalt()
+	if err != nil {
+		return fmt.Errorf("generate recovery salt: %w", err)
+	}
+
+	verifyHash, encryptKey, err := s.crypto.DeriveRecoveryKeys(newPhrase, newRecoverySalt)
+	if err != nil {
+		return fmt.Errorf("derive recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(encryptKey)
+
+	newRecoveryKeyNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return fmt.Errorf("generate recovery nonce: %w", err)
+	}
+
+	// Wrap the existing master vault key with the new v2 encrypt key. The
+	// master key itself doesn't change — only the recovery wrapper.
+	encryptedVaultKey, err := s.crypto.Encrypt(s.derivedKey, encryptKey, newRecoveryKeyNonce)
+	if err != nil {
+		return fmt.Errorf("encrypt vault key: %w", err)
+	}
+
+	// Re-serialize the vault data under the existing master key. We have to
+	// regenerate the nonce because GCM nonces must never repeat under a
+	// given key — even though the plaintext is identical to what's on disk.
+	plaintext, err := json.Marshal(s.vaultData)
+	if err != nil {
+		return fmt.Errorf("serialize vault data: %w", err)
+	}
+	newNonce, err := s.crypto.GenerateNonce()
+	if err != nil {
+		return fmt.Errorf("generate data nonce: %w", err)
+	}
+	newCiphertext, err := s.crypto.Encrypt(plaintext, s.derivedKey, newNonce)
+	if err != nil {
+		return fmt.Errorf("encrypt vault data: %w", err)
+	}
+
+	vault := models.Vault{
+		Version:            vaultVersion, // stamps v2
+		Username:           s.username,
+		PasswordHint:       s.passwordHint,
+		Salt:               crypto.EncodeBase64(s.salt),
+		Nonce:              crypto.EncodeBase64(newNonce),
+		EncryptedData:      crypto.EncodeBase64(newCiphertext),
+		RecoveryPhraseHash: crypto.EncodeBase64(verifyHash),
+		RecoveryPhraseSalt: crypto.EncodeBase64(newRecoverySalt),
+		RecoveryKeyNonce:   crypto.EncodeBase64(newRecoveryKeyNonce),
+		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
+		CreatedAt:          s.createdAt,
+		UpdatedAt:          time.Now(),
+	}
+	if err := s.saveVaultFile(vault); err != nil {
+		return fmt.Errorf("save migrated vault: %w", err)
+	}
+
+	// Update in-memory state to match on-disk.
+	s.recoveryPhraseHash = vault.RecoveryPhraseHash
+	s.recoveryPhraseSalt = vault.RecoveryPhraseSalt
+	s.recoveryKeyNonce = vault.RecoveryKeyNonce
+	s.encryptedVaultKey = vault.EncryptedVaultKey
+	s.pendingRotatedPhrase = newPhrase
+	s.needsRecoveryRotation = false
+	return nil
+}
+
+// ConsumePendingRecoveryRotation returns the cleartext of a recovery phrase
+// that was just generated during a v1→v2 migration, if one is pending. The
+// phrase is returned at most ONCE per unlock — subsequent calls return
+// ("", false) so the frontend can't accidentally display it twice and the
+// cleartext doesn't linger in Go memory beyond the first read.
+func (s *StorageService) ConsumePendingRecoveryRotation() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingRotatedPhrase == "" {
+		return "", false
+	}
+	phrase := s.pendingRotatedPhrase
+	s.pendingRotatedPhrase = ""
+	return phrase, true
 }
 
 // Lock clears the unlocked vault from memory
@@ -242,6 +388,9 @@ func (s *StorageService) Lock() {
 	s.derivedKey = nil
 	s.salt = nil
 	s.vaultData = nil
+	s.createdAt = time.Time{}
+	s.pendingRotatedPhrase = ""
+	s.needsRecoveryRotation = false
 }
 
 // GetUsername returns the current logged-in username
@@ -318,7 +467,7 @@ func (s *StorageService) UpdatePasswordHint(hint string) error {
 		RecoveryPhraseSalt: s.recoveryPhraseSalt,
 		RecoveryKeyNonce:   s.recoveryKeyNonce,
 		EncryptedVaultKey:  s.encryptedVaultKey,
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -352,7 +501,7 @@ func (s *StorageService) Save() error {
 		return fmt.Errorf("failed to encrypt vault: %w", err)
 	}
 
-	// Update vault structure (preserving recovery phrase fields)
+	// Update vault structure (preserving recovery phrase fields + original creation time)
 	vault := models.Vault{
 		Version:            vaultVersion,
 		Username:           s.username,
@@ -364,7 +513,7 @@ func (s *StorageService) Save() error {
 		RecoveryPhraseSalt: s.recoveryPhraseSalt,
 		RecoveryKeyNonce:   s.recoveryKeyNonce,
 		EncryptedVaultKey:  s.encryptedVaultKey,
-		CreatedAt:          time.Now(), // This will be overwritten if loading
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -382,19 +531,15 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) (ne
 		return "", ErrVaultLocked
 	}
 
-	// Verify current password by attempting to derive key and compare
-	// We do this by re-deriving the key and checking if it matches
+	// Verify current password by re-deriving the key and comparing against
+	// the unlocked-state copy. Constant-time compare prevents a timing oracle
+	// on byte position; our existing VerifyRecoveryPhrase already uses
+	// subtle — this path was inconsistent with that.
 	testKey := s.crypto.DeriveKey(currentPassword, s.salt)
 	defer crypto.ClearBytes(testKey)
 
-	// Compare with stored derived key
-	if len(testKey) != len(s.derivedKey) {
+	if subtle.ConstantTimeCompare(testKey, s.derivedKey) != 1 {
 		return "", ErrInvalidPassword
-	}
-	for i := range testKey {
-		if testKey[i] != s.derivedKey[i] {
-			return "", ErrInvalidPassword
-		}
 	}
 
 	// Generate new salt and nonce for the new password
@@ -435,11 +580,14 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) (ne
 		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
 	}
 
-	// Hash the new recovery phrase
-	newRecoveryHash := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
-
-	// Derive key from new recovery phrase
-	newRecoveryKey := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+	// Derive the verify hash + distinct encrypt key from the phrase via HKDF
+	// (v2 scheme). verifyHash is stored on disk; encryptKey wraps newKey and
+	// is never persisted directly.
+	newRecoveryHash, newRecoveryKey, err := s.crypto.DeriveRecoveryKeys(newRecoveryPhrase, newRecoverySalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(newRecoveryKey)
 
 	// Generate nonce for encrypting the vault key
 	newRecoveryKeyNonce, err := s.crypto.GenerateNonce()
@@ -447,7 +595,7 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) (ne
 		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
 	}
 
-	// Encrypt the new vault key with the new recovery-derived key
+	// Encrypt the new vault key with the new recovery-derived encrypt key
 	newEncryptedVaultKey, err := s.crypto.Encrypt(newKey, newRecoveryKey, newRecoveryKeyNonce)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
@@ -465,7 +613,7 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) (ne
 		RecoveryPhraseSalt: crypto.EncodeBase64(newRecoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(newRecoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(newEncryptedVaultKey),
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -532,20 +680,39 @@ func (s *StorageService) loadVaultFile() (*models.Vault, error) {
 	return &vault, nil
 }
 
-// migrateVault handles data migrations between vault versions
-// This function should be idempotent and handle all version upgrades
+// migrateVault inspects the on-disk vault's schema version and either flags
+// it for migration or refuses the load. Idempotent: running twice on the same
+// vault produces the same result.
+//
+//   v1 — flagged for recovery-scheme rotation on next successful Unlock
+//   v2 — current, no-op
+//   >2 — forward-compat fence. Refusing is safer than a silent downgrade
+//        where an old binary writes v2-scheme fields over v3-format data.
 func (s *StorageService) migrateVault(vault *models.Vault) error {
-	// Current version - no migrations needed yet
-	// When adding breaking changes in future versions, add migration logic here:
-	//
-	// if vault.Version < 2 {
-	//     // Migrate from v1 to v2
-	//     vault.NewField = defaultValue
-	//     vault.Version = 2
-	//     // Note: Caller should save after successful unlock to persist migration
-	// }
-
-	return nil
+	// Reset the flag unconditionally at the top of every call. This prevents
+	// a stale true value from a prior failed unlock of a v1 vault from
+	// surviving into a subsequent unlock of a v2 vault (e.g. if the on-disk
+	// file is edited out-of-band between attempts). Without this, migrateVault
+	// only set the flag in the v1 branch and had no path to clear it.
+	s.needsRecoveryRotation = false
+	switch {
+	case vault.Version == vaultVersion:
+		return nil
+	case vault.Version == 1:
+		// v1 → v2 recovery-scheme rotation. The rewrite happens in Unlock
+		// after the master password has decrypted the vault, so we only
+		// touch disk when we have the key material needed to re-wrap it.
+		s.needsRecoveryRotation = true
+		return nil
+	case vault.Version > vaultVersion:
+		return fmt.Errorf("%w (on-disk version %d, this build handles up to %d)",
+			ErrUnsupportedVersion, vault.Version, vaultVersion)
+	default:
+		// Should be unreachable given the two equality cases above, but
+		// treating an unexpected low number as unsupported is the safer
+		// default than silently opening it.
+		return fmt.Errorf("%w (on-disk version %d)", ErrUnsupportedVersion, vault.Version)
+	}
 }
 
 // saveVaultFile writes the vault to disk
@@ -608,11 +775,12 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
 	}
 
-	// Hash the recovery phrase (for verification)
-	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
-
-	// Derive key from recovery phrase (for encrypting the vault key)
-	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+	// Derive verify hash + distinct encrypt key via HKDF (v2 scheme).
+	recoveryHash, recoveryKey, err := s.crypto.DeriveRecoveryKeys(recoveryPhrase, recoverySalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(recoveryKey)
 
 	// Initialize with default data
 	vaultData := models.NewVaultData()
@@ -645,6 +813,7 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 	}
 
 	// Create vault structure with recovery phrase
+	now := time.Now()
 	vault := models.Vault{
 		Version:            vaultVersion,
 		Username:           username,
@@ -656,8 +825,8 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	// Save to file
@@ -672,6 +841,7 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 	s.derivedKey = vaultKey
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = now
 
 	return recoveryPhrase, nil
 }
@@ -698,11 +868,12 @@ func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
 		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
 	}
 
-	// Hash the recovery phrase (for verification)
-	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
-
-	// Derive key from recovery phrase (for encrypting the vault key)
-	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+	// Derive verify hash + distinct encrypt key via HKDF (v2 scheme).
+	recoveryHash, recoveryKey, err := s.crypto.DeriveRecoveryKeys(recoveryPhrase, recoverySalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(recoveryKey)
 
 	// Generate nonce for encrypting the vault key
 	recoveryKeyNonce, err := s.crypto.GenerateNonce()
@@ -710,7 +881,7 @@ func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
 		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
 	}
 
-	// Encrypt the current vault key with the recovery-derived key
+	// Encrypt the current vault key with the recovery-derived encrypt key
 	encryptedVaultKey, err := s.crypto.Encrypt(s.derivedKey, recoveryKey, recoveryKeyNonce)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
@@ -746,7 +917,7 @@ func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
 		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -816,11 +987,12 @@ func (s *StorageService) RegenerateRecoveryPhrase(password string) (string, erro
 		return "", fmt.Errorf("failed to generate recovery salt: %w", err)
 	}
 
-	// Hash the recovery phrase (for verification)
-	recoveryHash := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
-
-	// Derive key from recovery phrase (for encrypting the vault key)
-	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+	// Derive verify hash + distinct encrypt key via HKDF (v2 scheme).
+	recoveryHash, recoveryKey, err := s.crypto.DeriveRecoveryKeys(recoveryPhrase, recoverySalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(recoveryKey)
 
 	// Generate nonce for encrypting the vault key
 	recoveryKeyNonce, err := s.crypto.GenerateNonce()
@@ -828,7 +1000,7 @@ func (s *StorageService) RegenerateRecoveryPhrase(password string) (string, erro
 		return "", fmt.Errorf("failed to generate recovery key nonce: %w", err)
 	}
 
-	// Encrypt the current vault key with the recovery-derived key
+	// Encrypt the current vault key with the recovery-derived encrypt key
 	encryptedVaultKey, err := s.crypto.Encrypt(s.derivedKey, recoveryKey, recoveryKeyNonce)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt vault key: %w", err)
@@ -915,13 +1087,34 @@ func (s *StorageService) ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPass
 		return "", fmt.Errorf("invalid recovery hash: %w", err)
 	}
 
-	// Verify recovery phrase
-	if !s.crypto.VerifyRecoveryPhrase(recoveryPhrase, recoverySalt, storedHash) {
-		return "", errors.New("invalid recovery phrase")
+	// Verify phrase and derive the encrypt key for the vault key, branching
+	// on the vault schema version. In the v1 scheme both operations use the
+	// same single Argon2id output (that's the bug this PR fixes). In v2 they
+	// are distinct HKDF expansions.
+	var recoveryKey []byte
+	switch vault.Version {
+	case 1:
+		if !s.crypto.VerifyRecoveryPhrase(recoveryPhrase, recoverySalt, storedHash) {
+			return "", errors.New("invalid recovery phrase")
+		}
+		// v1: the stored hash IS the encrypt key (the bug). Use the legacy
+		// derivation so we can unwrap the v1 EncryptedVaultKey one last time
+		// before re-encrypting everything under v2 below.
+		recoveryKey = s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+	case 2:
+		var verifyHash []byte
+		verifyHash, recoveryKey, err = s.crypto.DeriveRecoveryKeys(recoveryPhrase, recoverySalt)
+		if err != nil {
+			return "", fmt.Errorf("failed to derive recovery keys: %w", err)
+		}
+		defer crypto.ClearBytes(verifyHash)
+		if subtle.ConstantTimeCompare(verifyHash, storedHash) != 1 {
+			return "", errors.New("invalid recovery phrase")
+		}
+	default:
+		return "", ErrUnsupportedVersion
 	}
-
-	// Derive key from recovery phrase to decrypt the vault key
-	recoveryKey := s.crypto.HashRecoveryPhrase(recoveryPhrase, recoverySalt)
+	defer crypto.ClearBytes(recoveryKey)
 
 	// Decode encrypted vault key and its nonce
 	encryptedVaultKey, err := crypto.DecodeBase64(vault.EncryptedVaultKey)
@@ -999,11 +1192,14 @@ func (s *StorageService) ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPass
 		return "", fmt.Errorf("failed to generate new recovery salt: %w", err)
 	}
 
-	// Hash the new recovery phrase
-	newRecoveryHash := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
-
-	// Derive key from new recovery phrase
-	newRecoveryKey := s.crypto.HashRecoveryPhrase(newRecoveryPhrase, newRecoverySalt)
+	// Derive verify hash + distinct encrypt key for the NEW phrase via v2
+	// HKDF. Regardless of whether the incoming vault was v1 or v2, the
+	// vault is written back as v2 below.
+	newRecoveryHash, newRecoveryKey, err := s.crypto.DeriveRecoveryKeys(newRecoveryPhrase, newRecoverySalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive new recovery keys: %w", err)
+	}
+	defer crypto.ClearBytes(newRecoveryKey)
 
 	// Generate nonce for encrypting the new vault key
 	newRecoveryKeyNonce, err := s.crypto.GenerateNonce()
@@ -1011,7 +1207,7 @@ func (s *StorageService) ResetPasswordWithRecoveryPhrase(recoveryPhrase, newPass
 		return "", fmt.Errorf("failed to generate new recovery key nonce: %w", err)
 	}
 
-	// Encrypt the new vault key with the new recovery-derived key
+	// Encrypt the new vault key with the new recovery-derived encrypt key
 	newEncryptedVaultKey, err := s.crypto.Encrypt(newVaultKey, newRecoveryKey, newRecoveryKeyNonce)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new vault key: %w", err)

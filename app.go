@@ -121,6 +121,27 @@ func (a *App) HasRecoveryPhrase() (bool, error) {
 	return a.storage.HasRecoveryPhrase()
 }
 
+// RotatedRecoveryPhrase is the frontend-facing shape for a recovery phrase
+// that was just generated during the v1→v2 security migration. Present=true
+// means the caller must display the phrase to the user and gate the app
+// behind that display — the old phrase no longer works.
+type RotatedRecoveryPhrase struct {
+	Present bool   `json:"present"`
+	Phrase  string `json:"phrase"`
+}
+
+// ConsumePendingRecoveryRotation drains the one-shot rotated-phrase slot
+// and returns its contents. The cleartext is cleared from Go memory on this
+// call so subsequent calls return Present=false. Frontend should call this
+// exactly once immediately after a successful Unlock.
+func (a *App) ConsumePendingRecoveryRotation() RotatedRecoveryPhrase {
+	phrase, ok := a.storage.ConsumePendingRecoveryRotation()
+	if !ok {
+		return RotatedRecoveryPhrase{Present: false}
+	}
+	return RotatedRecoveryPhrase{Present: true, Phrase: phrase}
+}
+
 // GenerateRecoveryPhraseForLegacyUser generates a recovery phrase for existing users without one
 // Must be called while vault is unlocked. Returns the new recovery phrase.
 func (a *App) GenerateRecoveryPhraseForLegacyUser() (string, error) {

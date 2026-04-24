@@ -8,6 +8,7 @@ type StoreOverrides = Partial<{
   showRecoveryPhraseModal: boolean
   pendingRecoveryPhrase: string | null
   requiresPinSetup: boolean
+  isRotationPhrase: boolean
 }>
 
 let currentOverrides: StoreOverrides = {}
@@ -24,6 +25,7 @@ vi.mock('../../stores/appStore', () => ({
       ? currentOverrides.pendingRecoveryPhrase
       : 'alpha beta gamma delta epsilon zeta',
     requiresPinSetup: currentOverrides.requiresPinSetup ?? true,
+    isRotationPhrase: currentOverrides.isRotationPhrase ?? false,
     dismissRecoveryPhraseModal,
   }),
 }))
@@ -95,6 +97,29 @@ describe('RecoveryPhraseModal', () => {
     await user.click(screen.getByRole('button', { name: /saved my recovery pin/i }))
 
     expect(dismissRecoveryPhraseModal).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the rotation-specific title and copy when isRotationPhrase is true', () => {
+    render_withOverrides({ isRotationPhrase: true })
+
+    // Header uses the softer "Security Update" framing rather than the
+    // first-time "Generate" or regen "Your New" copy.
+    expect(screen.getByText(/Security Update/i)).toBeInTheDocument()
+    // Body copy mentions that the old PIN is invalid — the mandatory user
+    // signal that this isn't a plain regenerate.
+    expect(
+      screen.getByText(/Your old PIN is no longer valid/i),
+    ).toBeInTheDocument()
+
+    // Default first-time/regen headings should NOT appear alongside rotation.
+    expect(screen.queryByText(/Generate Master Recovery PIN/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Your New Recovery PIN$/i)).not.toBeInTheDocument()
+  })
+
+  it('shows default title in non-rotation mode', () => {
+    render_withOverrides({ requiresPinSetup: true, isRotationPhrase: false })
+    expect(screen.getByText(/Generate Master Recovery PIN/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Security Update/i)).not.toBeInTheDocument()
   })
 
   it('copies the phrase to clipboard when the copy button is clicked post-reveal', async () => {

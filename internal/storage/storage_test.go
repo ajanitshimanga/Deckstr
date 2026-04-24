@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -954,4 +956,295 @@ func TestClearPasswordHint(t *testing.T) {
 	if hint != "" {
 		t.Errorf("Hint should be empty after clearing, got %v", hint)
 	}
+}
+
+// ============================================================================
+// Recovery scheme v2 migration tests. These pin the core security invariant
+// of the v2 scheme (verify ≠ encrypt on disk), the v1→v2 migration contract,
+// and the forward-compatibility fence for unsupported future versions.
+// ============================================================================
+
+// TestRecoveryHashIsNotEncryptionKey pins THE critical invariant the v2
+// scheme exists to enforce: the RecoveryPhraseHash stored in vault.osm
+// cannot be used as an AES-GCM key to decrypt the stored EncryptedVaultKey.
+// If this test ever starts passing decryption, the v1 bug is back.
+func TestRecoveryHashIsNotEncryptionKey(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	_, err := service.CreateVaultWithRecoveryPhrase("user", "strong-password", "")
+	if err != nil {
+		t.Fatalf("CreateVaultWithRecoveryPhrase: %v", err)
+	}
+
+	// Read the raw vault file the same way an attacker with FS access would.
+	raw, err := os.ReadFile(service.vaultPath)
+	if err != nil {
+		t.Fatalf("read vault: %v", err)
+	}
+	var vault models.Vault
+	if err := json.Unmarshal(raw, &vault); err != nil {
+		t.Fatalf("parse vault: %v", err)
+	}
+	if vault.Version != 2 {
+		t.Fatalf("fresh vaults must be stamped v2, got v%d", vault.Version)
+	}
+
+	verifyHash, _ := base64.StdEncoding.DecodeString(vault.RecoveryPhraseHash)
+	encryptedVaultKey, _ := base64.StdEncoding.DecodeString(vault.EncryptedVaultKey)
+	nonce, _ := base64.StdEncoding.DecodeString(vault.RecoveryKeyNonce)
+
+	// The v1 bug was that verifyHash could be used directly as the AES-GCM
+	// key. In v2, HKDF guarantees this fails.
+	_, decryptErr := service.crypto.Decrypt(encryptedVaultKey, verifyHash, nonce)
+	if decryptErr == nil {
+		t.Fatal("CRITICAL: RecoveryPhraseHash decrypted EncryptedVaultKey — v1 bug regression")
+	}
+}
+
+// TestUnlockV1VaultMigratesInPlace — construct a v1 vault using the legacy
+// derivation (the bug), unlock with master password, and assert that the
+// vault is silently rewritten to v2 with a freshly-rotated recovery phrase.
+func TestUnlockV1VaultMigratesInPlace(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	// Seed a v1-style vault on disk by reaching below the public API.
+	seedV1Vault(t, service, "user", "pw", "hint-text")
+
+	if err := service.Unlock("user", "pw"); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	// Post-unlock the vault on disk must be v2.
+	raw, _ := os.ReadFile(service.vaultPath)
+	var vault models.Vault
+	_ = json.Unmarshal(raw, &vault)
+	if vault.Version != 2 {
+		t.Fatalf("expected vault to be migrated to v2, got v%d", vault.Version)
+	}
+
+	// Rotated phrase must be available via the sidecar API.
+	phrase, ok := service.ConsumePendingRecoveryRotation()
+	if !ok || phrase == "" {
+		t.Fatal("expected a pending rotated phrase after v1 unlock")
+	}
+
+	// Sidecar is single-use — second call returns empty.
+	_, ok2 := service.ConsumePendingRecoveryRotation()
+	if ok2 {
+		t.Fatal("ConsumePendingRecoveryRotation must be single-use")
+	}
+
+	// Hint, username, and account data all survived the migration.
+	if service.GetUsername() != "user" {
+		t.Errorf("username not preserved")
+	}
+	if vault.PasswordHint != "hint-text" {
+		t.Errorf("hint not preserved, got %q", vault.PasswordHint)
+	}
+}
+
+// TestUnlockV1VaultWrongPasswordDoesNotMigrate — a wrong password on a v1
+// vault must not trigger rotation. The vault stays v1, the file on disk
+// stays untouched, and the next correct unlock gets its chance to migrate.
+func TestUnlockV1VaultWrongPasswordDoesNotMigrate(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	seedV1Vault(t, service, "user", "real-password", "")
+	before, _ := os.ReadFile(service.vaultPath)
+
+	if err := service.Unlock("user", "WRONG-password"); err == nil {
+		t.Fatal("Unlock with wrong password must fail")
+	}
+
+	after, _ := os.ReadFile(service.vaultPath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("vault file was modified after failed unlock — migration must not run on bad password")
+	}
+}
+
+// TestV2VaultIdempotentOnUnlock — a vault already on v2 must not be
+// rewritten on unlock (no migration, no new phrase).
+func TestV2VaultIdempotentOnUnlock(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	_, err := service.CreateVaultWithRecoveryPhrase("user", "pw", "")
+	if err != nil {
+		t.Fatalf("CreateVaultWithRecoveryPhrase: %v", err)
+	}
+	_, _ = service.ConsumePendingRecoveryRotation() // drain any pending from create (there shouldn't be one)
+	service.Lock()
+
+	before, _ := os.ReadFile(service.vaultPath)
+
+	if err := service.Unlock("user", "pw"); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	_, ok := service.ConsumePendingRecoveryRotation()
+	if ok {
+		t.Fatal("v2 unlock must not produce a rotated phrase")
+	}
+
+	after, _ := os.ReadFile(service.vaultPath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("v2 vault was rewritten on plain unlock")
+	}
+}
+
+// TestUnlockRefusesForwardVersions — a vault from a future Deckstr build
+// must refuse to open rather than try to decrypt under wrong assumptions.
+func TestUnlockRefusesForwardVersions(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	// Start from a valid v2 vault, then bump Version to 99 and re-save.
+	_, err := service.CreateVaultWithRecoveryPhrase("user", "pw", "")
+	if err != nil {
+		t.Fatalf("CreateVaultWithRecoveryPhrase: %v", err)
+	}
+	service.Lock()
+	raw, _ := os.ReadFile(service.vaultPath)
+	var vault models.Vault
+	_ = json.Unmarshal(raw, &vault)
+	vault.Version = 99
+	remarshaled, _ := json.MarshalIndent(vault, "", "  ")
+	_ = os.WriteFile(service.vaultPath, remarshaled, 0600)
+
+	err = service.Unlock("user", "pw")
+	if err == nil {
+		t.Fatal("Unlock must refuse v99 vault")
+	}
+	if !errors.Is(err, ErrUnsupportedVersion) {
+		t.Errorf("expected ErrUnsupportedVersion, got %v", err)
+	}
+}
+
+// TestMigrateVaultResetsFlagForV2 pins that loading a v2 vault clears
+// any stale needsRecoveryRotation flag left over from a prior unlock.
+// Without this, a wrong-password attempt on a v1 vault could leave the
+// flag true, and if the on-disk vault were swapped to v2 before the
+// next attempt, rotation would incorrectly fire on the v2 vault.
+func TestMigrateVaultResetsFlagForV2(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	// Create a v2 vault on disk, then lock.
+	_, err := service.CreateVaultWithRecoveryPhrase("user", "pw", "")
+	if err != nil {
+		t.Fatalf("create v2 vault: %v", err)
+	}
+	_, _ = service.ConsumePendingRecoveryRotation()
+	service.Lock()
+
+	// Simulate a stale flag left over from a prior failed v1 unlock attempt
+	// (which, before this fix, migrateVault had no path to clear).
+	service.needsRecoveryRotation = true
+
+	// Load the v2 vault. migrateVault must clear the stale flag.
+	v, err := service.loadVaultFile()
+	if err != nil {
+		t.Fatalf("loadVaultFile: %v", err)
+	}
+	if v.Version != 2 {
+		t.Fatalf("expected on-disk v2, got v%d", v.Version)
+	}
+	if service.needsRecoveryRotation {
+		t.Error("migrateVault must clear the rotation flag when loading a v2 vault")
+	}
+}
+
+// TestResetWithPhraseOnV1Vault — the forgot-password path must work for
+// users who never unlocked after the v1.3.1 update. Reset with their v1
+// phrase, land on a v2 vault with a new phrase.
+func TestResetWithPhraseOnV1Vault(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	seedPhrase := seedV1VaultReturningPhrase(t, service, "user", "original-pw")
+
+	newPhrase, err := service.ResetPasswordWithRecoveryPhrase(seedPhrase, "new-pw", "")
+	if err != nil {
+		t.Fatalf("ResetPasswordWithRecoveryPhrase on v1 vault: %v", err)
+	}
+	if newPhrase == "" || newPhrase == seedPhrase {
+		t.Error("reset must produce a distinct new phrase")
+	}
+
+	// Vault is now v2 and new password unlocks it.
+	raw, _ := os.ReadFile(service.vaultPath)
+	var vault models.Vault
+	_ = json.Unmarshal(raw, &vault)
+	if vault.Version != 2 {
+		t.Errorf("expected vault to be v2 after reset, got v%d", vault.Version)
+	}
+
+	service.Lock()
+	if err := service.Unlock("user", "new-pw"); err != nil {
+		t.Errorf("unlock with new password after v1-reset failed: %v", err)
+	}
+}
+
+// seedV1Vault writes a vault.osm to disk that uses the broken v1 recovery
+// scheme (verifyHash == encryptKey). It bypasses the public API, which
+// always produces v2 vaults post-patch. Returns the cleartext of the seeded
+// phrase for tests that need to exercise the phrase path.
+func seedV1Vault(t *testing.T, s *StorageService, username, password, hint string) {
+	t.Helper()
+	_ = seedV1VaultReturningPhrase(t, s, username, password)
+	// Patch in the hint we wanted (seedV1VaultReturningPhrase doesn't take one).
+	if hint != "" {
+		raw, _ := os.ReadFile(s.vaultPath)
+		var v models.Vault
+		_ = json.Unmarshal(raw, &v)
+		v.PasswordHint = hint
+		out, _ := json.MarshalIndent(v, "", "  ")
+		_ = os.WriteFile(s.vaultPath, out, 0600)
+	}
+}
+
+func seedV1VaultReturningPhrase(t *testing.T, s *StorageService, username, password string) string {
+	t.Helper()
+
+	phrase, err := s.crypto.GenerateRecoveryPhrase()
+	if err != nil {
+		t.Fatalf("seed phrase: %v", err)
+	}
+	recoverySalt, _ := s.crypto.GenerateSalt()
+	// v1 bug: verify hash AND encrypt key are the same Argon2id output.
+	recoveryHash := s.crypto.HashRecoveryPhrase(phrase, recoverySalt)
+	recoveryKey := recoveryHash
+
+	vaultData := models.NewVaultData()
+	plaintext, _ := json.Marshal(vaultData)
+	salt, nonce, ciphertext, err := s.crypto.EncryptWithPassword(plaintext, password)
+	if err != nil {
+		t.Fatalf("seed encrypt: %v", err)
+	}
+	vaultKey := s.crypto.DeriveKey(password, salt)
+	recoveryKeyNonce, _ := s.crypto.GenerateNonce()
+	encryptedVaultKey, err := s.crypto.Encrypt(vaultKey, recoveryKey, recoveryKeyNonce)
+	if err != nil {
+		t.Fatalf("seed wrap vault key: %v", err)
+	}
+
+	v := models.Vault{
+		Version:            1, // the broken scheme
+		Username:           username,
+		Salt:               base64.StdEncoding.EncodeToString(salt),
+		Nonce:              base64.StdEncoding.EncodeToString(nonce),
+		EncryptedData:      base64.StdEncoding.EncodeToString(ciphertext),
+		RecoveryPhraseHash: base64.StdEncoding.EncodeToString(recoveryHash),
+		RecoveryPhraseSalt: base64.StdEncoding.EncodeToString(recoverySalt),
+		RecoveryKeyNonce:   base64.StdEncoding.EncodeToString(recoveryKeyNonce),
+		EncryptedVaultKey:  base64.StdEncoding.EncodeToString(encryptedVaultKey),
+	}
+	out, _ := json.MarshalIndent(v, "", "  ")
+	if err := os.WriteFile(s.vaultPath, out, 0600); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	return phrase
 }

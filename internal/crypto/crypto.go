@@ -3,7 +3,10 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -175,25 +178,111 @@ func (c *CryptoService) GenerateRecoveryPhrase() (string, error) {
 	return strings.Join(words, " "), nil
 }
 
-// HashRecoveryPhrase hashes a recovery phrase using Argon2id (same as password hashing)
+// HKDF info labels for recovery key derivation (v2 scheme).
+//
+// These strings provide domain separation per RFC 5869 §3.2 so the same
+// phrase + salt can produce independent keys for verification vs.
+// encryption. Security does not depend on these strings being secret —
+// only on them being distinct across contexts. The "deckstr.org/v1/"
+// prefix makes collisions with any other HKDF user impossible even if
+// the code were embedded in a larger application. The "v1" in the label
+// is the label-scheme version (not the vault schema version) so we can
+// evolve labels independently of the wire format.
+const (
+	recoveryVerifyInfo  = "deckstr.org/v1/recovery/verify"
+	recoveryEncryptInfo = "deckstr.org/v1/recovery/encrypt"
+
+	// recoveryKeyLen matches AES-256 so the same 32 bytes can be used
+	// directly as an AES key for the encrypt derivation.
+	recoveryKeyLen = 32
+)
+
+// normalizeRecoveryPhrase collapses the user's typed phrase into a canonical
+// form so minor typing variations still verify: lowercase, trim leading and
+// trailing whitespace, and collapse runs of internal whitespace (including
+// tabs and newlines) into single spaces. Without the internal collapse,
+// "apple  bear" (two spaces) would hash differently than "apple bear".
+func normalizeRecoveryPhrase(phrase string) string {
+	return strings.Join(strings.Fields(strings.ToLower(phrase)), " ")
+}
+
+// DeriveRecoveryKeys derives two independent 32-byte keys from the recovery
+// phrase using Argon2id as the rate-limited base step followed by HKDF-SHA256
+// expansion into distinct domain-separated outputs.
+//
+//   master     = Argon2id(normalize(phrase), salt)         // slow, rate-limited
+//   verifyHash = HKDF-SHA256(master, nil, "…/recovery/verify",  32)
+//   encryptKey = HKDF-SHA256(master, nil, "…/recovery/encrypt", 32)
+//
+// verifyHash is safe to store on disk (its only job is a constant-time
+// equality check). encryptKey is used to wrap the master vault key and is
+// reconstructible only from the phrase plus salt — never persisted.
+//
+// This replaces the v1 scheme (HashRecoveryPhrase used for BOTH outputs)
+// where the stored verification hash was literally the encryption key,
+// letting anyone with read access to vault.osm decrypt the vault without
+// ever knowing the phrase. The v2 scheme closes that hole: HKDF guarantees
+// that verifyHash reveals nothing about encryptKey and vice versa.
+func (c *CryptoService) DeriveRecoveryKeys(phrase string, salt []byte) (verifyHash, encryptKey []byte, err error) {
+	normalized := normalizeRecoveryPhrase(phrase)
+	master := argon2.IDKey(
+		[]byte(normalized),
+		salt,
+		argonTime,
+		argonMemory,
+		argonThreads,
+		argonKeyLen,
+	)
+	defer ClearBytes(master)
+
+	verifyHash, err = hkdf.Key(sha256.New, master, nil, recoveryVerifyInfo, recoveryKeyLen)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hkdf verify: %w", err)
+	}
+	encryptKey, err = hkdf.Key(sha256.New, master, nil, recoveryEncryptInfo, recoveryKeyLen)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hkdf encrypt: %w", err)
+	}
+	return verifyHash, encryptKey, nil
+}
+
+// VerifyRecoveryPhraseV2 checks a phrase against a stored v2 verification
+// hash using constant-time comparison. Returns (false, nil) on mismatch,
+// (true, nil) on match, and propagates derivation errors. Both derived
+// halves (verify hash and encrypt key) are zeroed before return — verify
+// only needs one but we don't want the unused encrypt key lingering on
+// the heap until GC for consistency with other call sites.
+func (c *CryptoService) VerifyRecoveryPhraseV2(phrase string, salt []byte, storedVerifyHash []byte) (bool, error) {
+	verifyHash, encryptKey, err := c.DeriveRecoveryKeys(phrase, salt)
+	if err != nil {
+		return false, err
+	}
+	defer ClearBytes(verifyHash)
+	defer ClearBytes(encryptKey)
+	return subtle.ConstantTimeCompare(verifyHash, storedVerifyHash) == 1, nil
+}
+
+// HashRecoveryPhrase hashes a recovery phrase using Argon2id (legacy v1
+// scheme). Deprecated: the v1 scheme used this same output as both the
+// verification hash AND the key that encrypts the master vault key, which
+// means an attacker with read access to vault.osm could decrypt the vault
+// without ever knowing the phrase. Retained ONLY to read and migrate v1
+// vaults in storage. New code must use DeriveRecoveryKeys.
 func (c *CryptoService) HashRecoveryPhrase(phrase string, salt []byte) []byte {
 	// Normalize: lowercase and trim whitespace
 	normalized := strings.ToLower(strings.TrimSpace(phrase))
 	return c.DeriveKey(normalized, salt)
 }
 
-// VerifyRecoveryPhrase checks if a phrase matches a stored hash
+// VerifyRecoveryPhrase checks a phrase against a v1 verification hash using
+// constant-time comparison. Legacy — see HashRecoveryPhrase.
 func (c *CryptoService) VerifyRecoveryPhrase(phrase string, salt []byte, storedHash []byte) bool {
 	computedHash := c.HashRecoveryPhrase(phrase, salt)
+	defer ClearBytes(computedHash)
 	if len(computedHash) != len(storedHash) {
 		return false
 	}
-	// Constant-time comparison to prevent timing attacks
-	var diff byte
-	for i := range computedHash {
-		diff |= computedHash[i] ^ storedHash[i]
-	}
-	return diff == 0
+	return subtle.ConstantTimeCompare(computedHash, storedHash) == 1
 }
 
 // wordList is a curated list of simple, unambiguous English words for recovery phrases.
