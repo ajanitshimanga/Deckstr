@@ -15,15 +15,23 @@ import (
 // accidentally adding a `"username": user.Name` entry to a telemetry.Log
 // call fails the build rather than shipping user data off-device.
 var bannedAttributeKeys = map[string]struct{}{
-	"password":    {},
-	"username":    {},
-	"riotId":      {},
-	"riot_id":     {},
-	"puuid":       {},
-	"displayName": {},
-	"display_name": {},
-	"notes":       {},
-	"tags":        {},
+	"password":        {},
+	"master_password": {},
+	"username":        {},
+	"riotId":          {},
+	"riot_id":         {},
+	"puuid":           {},
+	"displayName":     {},
+	"display_name":    {},
+	"notes":           {},
+	"tags":            {},
+	// Recovery material must never leave the device. Flagged even though
+	// the crypto package only ever holds these transiently, because a
+	// future refactor could accidentally thread them into a Log call.
+	"recovery_phrase": {},
+	"recovery_hash":   {},
+	"vault_key":       {},
+	"vault_path":      {},
 }
 
 // TestTelemetryAttributesAreNotVaultFields walks every Go file in the
