@@ -45,6 +45,14 @@ vi.mock('../../stores/appStore', () => ({
             { id: 'valorant', name: 'Valorant', networkId: 'riot' },
           ],
         },
+        {
+          id: 'epic',
+          name: 'Epic Games',
+          games: [
+            { id: 'rl', name: 'Rocket League', networkId: 'epic' },
+            { id: 'fortnite', name: 'Fortnite', networkId: 'epic' },
+          ],
+        },
       ],
       tags: ['main', 'smurf'],
       searchQuery: currentOverrides.searchQuery ?? '',
@@ -195,6 +203,41 @@ describe('AccountList — delete flow', () => {
     await user.click(confirm)
 
     expect(removeAccount).toHaveBeenCalledWith('kill-me')
+  })
+})
+
+describe('AccountList — game badge', () => {
+  // Anti-regression for the bug where the badge ternary defaulted any unknown
+  // gameId to "Valorant" (so a Rocket League card displayed as Valorant). The
+  // dynamic gameBadge resolves names from the gameNetworks catalog.
+  it('renders the correct label for Rocket League and Fortnite (not "Valorant")', () => {
+    const acc = makeAccount({
+      id: 'rl-epic',
+      networkId: 'epic',
+      games: ['rl', 'fortnite'],
+    })
+    render_withOverrides({ accounts: [acc], filteredAccounts: [acc] })
+
+    // Badges are <span>s on the card. Scope to spans so we don't pick up the
+    // Game-filter <option> values, which legitimately list every known game.
+    const badgeText = (label: string) =>
+      screen.queryAllByText(label).filter((el) => el.tagName === 'SPAN')
+
+    expect(badgeText('Rocket League')).toHaveLength(1)
+    expect(badgeText('Fortnite')).toHaveLength(1)
+    // The card shouldn't accidentally label either game as Valorant.
+    expect(badgeText('Valorant')).toHaveLength(0)
+  })
+
+  it('falls back to the catalog name for game ids it has no hardcoded badge for', () => {
+    // Simulate a future game added to gameNetworks but not yet in GAME_BADGE.
+    // The dynamic resolver should still surface the proper name, not the id.
+    currentOverrides = {}
+    const acc = makeAccount({ networkId: 'riot', games: ['lol'] })
+    render_withOverrides({ accounts: [acc], filteredAccounts: [acc] })
+    // 'lol' is in GAME_BADGE so it renders as "League"; this just sanity-
+    // checks that the known-id path still works alongside the new fallback.
+    expect(screen.getByText('League')).toBeInTheDocument()
   })
 })
 

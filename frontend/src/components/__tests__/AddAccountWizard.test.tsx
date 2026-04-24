@@ -25,8 +25,14 @@ vi.mock('../../stores/appStore', () => ({
       {
         id: 'epic',
         name: 'Epic Games',
-        sharedAccount: false,
-        games: [{ id: 'rl', name: 'Rocket League', networkId: 'epic' }],
+        // One Epic login covers Rocket League AND Fortnite — picking either
+        // auto-tags the account with both, mirroring the Riot LoL/TFT/Valorant
+        // pattern.
+        sharedAccount: true,
+        games: [
+          { id: 'rl', name: 'Rocket League', networkId: 'epic' },
+          { id: 'fortnite', name: 'Fortnite', networkId: 'epic' },
+        ],
       },
       {
         id: 'steam',
@@ -213,6 +219,73 @@ describe('AddAccountWizard', () => {
     expect(payload.riotId).toBe('')
     expect(payload.region).toBe('')
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('auto-links Rocket League when picking Fortnite (Epic single-network → skip network step → still links)', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await fillIdentity(user, 'fortnite-main', 'pw')
+    // Fortnite is Epic-only, so the network step is skipped — we land
+    // directly on details. The auto-link must fire even without an explicit
+    // network pick because Epic was implicitly chosen as the only option.
+    await user.click(screen.getByRole('button', { name: /fortnite/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    const note = screen.getByRole('note', { name: /linked games/i })
+    expect(note).toHaveTextContent(/fortnite/i)
+    expect(note).toHaveTextContent(/rocket league/i)
+
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    const payload = addAccount.mock.calls[0][0]
+    expect(payload.networkId).toBe('epic')
+    expect([...payload.games].sort()).toEqual(['fortnite', 'rl'])
+  })
+
+  it('switching games on the game step clears stale auto-link state (Fortnite → swap to RL → Steam)', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await fillIdentity(user, 'tester', 'pw')
+
+    // Pick Fortnite first — it's Epic-only so selectedNetwork pre-fills to epic.
+    // Then swap to Rocket League on the same step (which is multi-store and
+    // resets selectedNetwork). Pick Steam → Add. Steam isn't shared so games
+    // must contain only 'rl' — no Fortnite leaking from the earlier pick.
+    await user.click(screen.getByRole('button', { name: /fortnite/i }))
+    await user.click(screen.getByRole('button', { name: /rocket league/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /steam/i }))
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    const payload = addAccount.mock.calls[0][0]
+    expect(payload.networkId).toBe('steam')
+    expect(payload.games).toEqual(['rl'])
+  })
+
+  it('auto-links Fortnite when picking Rocket League on Epic (one Epic login covers both)', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await fillIdentity(user, 'rl-epic', 'pw')
+    await user.click(screen.getByRole('button', { name: /rocket league/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    await user.click(screen.getByRole('button', { name: /epic games/i }))
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+
+    // Linked-games note should mention both titles since Epic.sharedAccount=true.
+    const note = screen.getByRole('note', { name: /linked games/i })
+    expect(note).toHaveTextContent(/rocket league/i)
+    expect(note).toHaveTextContent(/fortnite/i)
+
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    const payload = addAccount.mock.calls[0][0]
+    expect(payload.networkId).toBe('epic')
+    expect([...payload.games].sort()).toEqual(['fortnite', 'rl'])
   })
 
   it('shows Riot ID + Region only when the chosen game lives on Riot', async () => {
