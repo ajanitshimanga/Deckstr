@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**An encrypted deck for your gaming accounts — stored locally, never in the cloud.**
+**An encrypted deck for your gaming accounts — encrypted on your machine, unlocked only by you.**
 
 _Deckstr = **deck** (the stack of accounts you juggle) + **store** (encrypted, on your machine, yours alone)._
 
@@ -23,17 +23,31 @@ _Deckstr = **deck** (the stack of accounts you juggle) + **store** (encrypted, o
 
 ## Why Deckstr?
 
-Managing multiple gaming accounts is a pain. Spreadsheets leak, browser passwords sync to clouds you don't control, and sticky notes... well, you know.
+### Managing gaming accounts is a pain
 
-**Deckstr** keeps your credentials **encrypted locally** on your machine. No cloud. No sync. No data leaving your computer. Just military-grade encryption protecting your accounts.
+You start with one. Then comes the account for your friend's region, the one you made during a free weekend, the alt you use for a different game mode, the throwaway from a tournament, the one tied to an email you barely check. Five years of gaming and suddenly there are six logins to keep straight — each with its own username, password, tags, and history.
 
-### Built by a Competitive Player
+### Alt accounts get lost
 
-> *"Previously, I peaked Top 500 in Overwatch, Top 1000 in Valorant, Eternity in Marvel Rivals, and multi-season Grand Champion in Rocket League. I have accounts at every rank because that's the only way to actually play with all my friends. I got tired of spreadsheets."*
->
-> *Next goal: Challenger in TFT. If you're curious, come hang out.*
+The account you haven't touched in a year is the one you *really* can't afford to forget. The password reset email goes to a Gmail you stopped using. The recovery phone number is your old carrier. You made the account, you owned the progress, and now it's effectively stranded.
 
-This isn't about stomping lower-ranked lobbies—it's about being able to queue with friends at different skill levels without a 3-division gap locking you out. If you've ever had to remember which account has which rank, which champions, or which region, this tool is for you.
+### Plain `.txt` files and Google Docs aren't secure enough
+
+Most people end up with one of these:
+
+- An `accounts.txt` on the desktop
+- A Google Doc called "passwords" synced to every device they've ever signed into
+- A spreadsheet shared with the squad once and never unshared
+- Notes app entries with usernames and passwords side by side
+- A DM to themselves with the credentials in plaintext
+
+All of them leak in predictable ways. A Google Doc's "anyone with the link" toggle is two clicks away — and Docs keeps every past revision forever, so a deleted password is still in the history. Shared spreadsheets sit in the recipients' Drives long after you assumed they were gone. Your `.txt` is plaintext on disk, readable by anything with file access. Notes sync to whichever cloud your device is tied to — often the same cloud someone else in your household is also signed into.
+
+### What Deckstr does instead
+
+Deckstr is a purpose-built vault for gaming accounts. Every credential is encrypted with AES-256-GCM, unlocked only by a master password that never leaves your machine. The crypto is zero-knowledge by design — the vault file itself is unreadable without your password, so whether it stays local today or rides along with an optional encrypted sync later, the plaintext never leaves your control.
+
+And because it's built for games, it auto-detects which account you're signed into and surfaces the ranks, tags, and notes you care about without switching contexts.
 
 ### Built for Riot Games Players
 
@@ -53,7 +67,7 @@ This isn't about stomping lower-ranked lobbies—it's about being able to queue 
 | **AES-256-GCM Encryption** | Bank-level encryption for all stored data |
 | **Argon2id Key Derivation** | OWASP-recommended password hashing |
 | **Zero-Knowledge** | Your master password never leaves your device |
-| **Local Storage Only** | No cloud, no sync, no data collection |
+| **On-disk, yours alone** | Vault lives on your machine, encrypted at rest. Nothing readable ever leaves your device |
 | **Password Hints** | Optional hints to help remember your master password |
 
 ### Account Management
