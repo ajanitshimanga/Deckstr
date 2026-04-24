@@ -349,7 +349,7 @@ func NewVaultData() VaultData {
 	return VaultData{
 		Accounts:     []Account{},
 		GameNetworks: DefaultGameNetworks(),
-		Tags:         []string{"main", "smurf"},
+		Tags:         []string{"main", "alt"},
 		Settings:     DefaultSettings(),
 	}
 }

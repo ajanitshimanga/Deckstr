@@ -57,7 +57,7 @@ This isn't about stomping lower-ranked lobbies—it's about being able to queue 
 ### Account Management
 
 - **Unlimited accounts** - Store as many as you need
-- **Tag system** - Organize with labels like "main", "smurf", "ranked-only"
+- **Tag system** - Organize with labels like "main", "alt", "ranked-only"
 - **Quick copy** - One-click copy username or password
 - **Notes field** - Add reminders for each account
 - **Search & filter** - Find accounts instantly
