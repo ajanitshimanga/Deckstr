@@ -49,6 +49,11 @@ type StorageService struct {
 	salt         []byte
 	vaultData    *models.VaultData
 
+	// createdAt is the original vault creation timestamp, preserved across all
+	// mutations. Populated on Unlock / CreateVault*; any Save/Change path that
+	// overwrote this with time.Now() used to silently reset account history.
+	createdAt time.Time
+
 	// Recovery phrase fields (preserved across saves)
 	recoveryPhraseHash string
 	recoveryPhraseSalt string
@@ -130,6 +135,7 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 	}
 
 	// Create vault structure
+	now := time.Now()
 	vault := models.Vault{
 		Version:       vaultVersion,
 		Username:      username,
@@ -137,8 +143,8 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 		Salt:          crypto.EncodeBase64(salt),
 		Nonce:         crypto.EncodeBase64(nonce),
 		EncryptedData: crypto.EncodeBase64(ciphertext),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	// Save to file
@@ -153,6 +159,7 @@ func (s *StorageService) CreateVaultWithHint(username, masterPassword, hint stri
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = now
 
 	return nil
 }
@@ -218,6 +225,7 @@ func (s *StorageService) Unlock(username, masterPassword string) error {
 	s.derivedKey = s.crypto.DeriveKey(masterPassword, salt)
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = vault.CreatedAt
 
 	// Preserve recovery phrase fields for Save() operations
 	s.recoveryPhraseHash = vault.RecoveryPhraseHash
@@ -242,6 +250,7 @@ func (s *StorageService) Lock() {
 	s.derivedKey = nil
 	s.salt = nil
 	s.vaultData = nil
+	s.createdAt = time.Time{}
 }
 
 // GetUsername returns the current logged-in username
@@ -318,7 +327,7 @@ func (s *StorageService) UpdatePasswordHint(hint string) error {
 		RecoveryPhraseSalt: s.recoveryPhraseSalt,
 		RecoveryKeyNonce:   s.recoveryKeyNonce,
 		EncryptedVaultKey:  s.encryptedVaultKey,
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -352,7 +361,7 @@ func (s *StorageService) Save() error {
 		return fmt.Errorf("failed to encrypt vault: %w", err)
 	}
 
-	// Update vault structure (preserving recovery phrase fields)
+	// Update vault structure (preserving recovery phrase fields + original creation time)
 	vault := models.Vault{
 		Version:            vaultVersion,
 		Username:           s.username,
@@ -364,7 +373,7 @@ func (s *StorageService) Save() error {
 		RecoveryPhraseSalt: s.recoveryPhraseSalt,
 		RecoveryKeyNonce:   s.recoveryKeyNonce,
 		EncryptedVaultKey:  s.encryptedVaultKey,
-		CreatedAt:          time.Now(), // This will be overwritten if loading
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -465,7 +474,7 @@ func (s *StorageService) ChangePassword(currentPassword, newPassword string) (ne
 		RecoveryPhraseSalt: crypto.EncodeBase64(newRecoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(newRecoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(newEncryptedVaultKey),
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
@@ -645,6 +654,7 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 	}
 
 	// Create vault structure with recovery phrase
+	now := time.Now()
 	vault := models.Vault{
 		Version:            vaultVersion,
 		Username:           username,
@@ -656,8 +666,8 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	// Save to file
@@ -672,6 +682,7 @@ func (s *StorageService) CreateVaultWithRecoveryPhrase(username, masterPassword,
 	s.derivedKey = vaultKey
 	s.salt = salt
 	s.vaultData = &vaultData
+	s.createdAt = now
 
 	return recoveryPhrase, nil
 }
@@ -746,7 +757,7 @@ func (s *StorageService) GenerateRecoveryPhraseForLegacyUser() (string, error) {
 		RecoveryPhraseSalt: crypto.EncodeBase64(recoverySalt),
 		RecoveryKeyNonce:   crypto.EncodeBase64(recoveryKeyNonce),
 		EncryptedVaultKey:  crypto.EncodeBase64(encryptedVaultKey),
-		CreatedAt:          time.Now(),
+		CreatedAt:          s.createdAt,
 		UpdatedAt:          time.Now(),
 	}
 
