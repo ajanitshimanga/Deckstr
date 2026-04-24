@@ -57,8 +57,9 @@ RestartApplications=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Startup:"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Startup:"
+Name: "telemetry"; Description: "Help make Deckstr better and data driven with telemetry for feature iteration!"; GroupDescription: "Usage Analytics:"
 
 [Files]
 ; Main executable
@@ -177,10 +178,36 @@ begin
   end;
 end;
 
+// Write/remove the telemetry opt-out marker based on the installer checkbox.
+// Absence of the marker = telemetry enabled (the default when the box is
+// ticked). Presence = user unticked the box, disable telemetry at runtime.
+// Must run after MigrateLegacyAppData so the rename doesn't stomp our marker.
+procedure ApplyTelemetryChoice;
+var
+  AppDir, MarkerPath: String;
+begin
+  AppDir := ExpandConstant('{userappdata}\Deckstr');
+  MarkerPath := AppDir + '\telemetry.disabled';
+  if WizardIsTaskSelected('telemetry') then
+  begin
+    if FileExists(MarkerPath) then
+      DeleteFile(MarkerPath);
+  end
+  else
+  begin
+    if not DirExists(AppDir) then
+      ForceDirectories(AppDir);
+    SaveStringToFile(MarkerPath, '', False);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     MigrateLegacyAppData;
+    ApplyTelemetryChoice;
+  end;
 end;
 
 // Offer to delete user data on uninstall

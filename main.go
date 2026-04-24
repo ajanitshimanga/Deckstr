@@ -23,11 +23,14 @@ func main() {
 	startTime := time.Now()
 
 	// Telemetry is best-effort — if it can't initialise (unwritable config
-	// dir, etc.) we log to stderr and keep running.
-	if err := telemetry.Init("Deckstr", updater.Version); err != nil {
-		println("telemetry init failed:", err.Error())
+	// dir, etc.) we log to stderr and keep running. Respect the installer's
+	// opt-out marker so unticking the checkbox actually disables logging.
+	if !telemetry.IsDisabled() {
+		if err := telemetry.Init("Deckstr", updater.Version); err != nil {
+			println("telemetry init failed:", err.Error())
+		}
+		defer telemetry.Close()
 	}
-	defer telemetry.Close()
 
 	// Create an instance of the app structure
 	app := NewApp()

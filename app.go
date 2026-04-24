@@ -562,3 +562,35 @@ func (a *App) LogEvent(level, event string, attributes map[string]string) {
 		telemetry.LogInfo(event, attrs)
 	}
 }
+
+// IsTelemetryEnabled reports whether usage analytics are currently active.
+// Backed by the opt-out marker file written at install time; also mutated
+// by SetTelemetryEnabled below.
+func (a *App) IsTelemetryEnabled() bool {
+	return !telemetry.IsDisabled()
+}
+
+// SetTelemetryEnabled toggles usage analytics on/off and applies the
+// change immediately: on disable, the active logger is closed so no new
+// events are written; on enable, a fresh logger is started. Survives app
+// restarts via the marker file.
+func (a *App) SetTelemetryEnabled(enabled bool) error {
+	if err := telemetry.SetDisabled(!enabled); err != nil {
+		return err
+	}
+	if enabled {
+		return telemetry.Init("Deckstr", updater.Version)
+	}
+	return telemetry.Close()
+}
+
+// OpenUsageLogsFolder reveals the rotated log directory in the user's
+// file manager so they can inspect or export the raw JSON-line records.
+// Promised by TELEMETRY.md as a transparency control.
+func (a *App) OpenUsageLogsFolder() error {
+	path, err := telemetry.LogsPath()
+	if err != nil {
+		return err
+	}
+	return openInFileManager(path)
+}

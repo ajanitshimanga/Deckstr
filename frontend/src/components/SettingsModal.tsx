@@ -15,10 +15,19 @@ import {
   Zap,
   Clock,
   LogOut,
+  ShieldCheck,
+  FolderOpen,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
+import {
+  IsTelemetryEnabled,
+  SetTelemetryEnabled,
+  OpenUsageLogsFolder,
+  OpenReleasePage,
+} from '../../wailsjs/go/main/App'
 
-type SettingsTab = 'general' | 'security' | 'ranked' | 'updates'
+type SettingsTab = 'general' | 'security' | 'privacy' | 'ranked' | 'updates'
 
 interface SettingsModalProps {
   onClose: () => void
@@ -43,6 +52,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: 'General', icon: <User className="w-4 h-4" /> },
     { id: 'security', label: 'Security', icon: <Shield className="w-4 h-4" /> },
+    { id: 'privacy', label: 'Data & Privacy', icon: <ShieldCheck className="w-4 h-4" /> },
     { id: 'ranked', label: 'Ranked', icon: <Trophy className="w-4 h-4" /> },
     { id: 'updates', label: 'Updates', icon: <Download className="w-4 h-4" /> },
   ]
@@ -112,6 +122,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           <div className="flex-1 overflow-y-auto p-6">
             {activeTab === 'general' && <GeneralTab />}
             {activeTab === 'security' && <SecurityTab onClose={onClose} />}
+            {activeTab === 'privacy' && <PrivacyTab />}
             {activeTab === 'ranked' && <RankedTab />}
             {activeTab === 'updates' && <UpdatesTab />}
           </div>
@@ -577,6 +588,136 @@ function PinRegenForm({ onBack }: { onBack: () => void }) {
         {loading ? 'Verifying...' : (hasRecoveryPhrase ? 'Regenerate PIN' : 'Generate PIN')}
       </button>
     </form>
+  )
+}
+
+// Data & Privacy Tab
+function PrivacyTab() {
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // Read the live state on mount — the source of truth is the marker file
+  // on disk, not a store value, so we always re-query when this tab opens.
+  useEffect(() => {
+    IsTelemetryEnabled().then(setEnabled).catch(() => setEnabled(false))
+  }, [])
+
+  const handleToggle = async () => {
+    if (enabled === null || saving) return
+    const next = !enabled
+    setSaving(true)
+    try {
+      await SetTelemetryEnabled(next)
+      setEnabled(next)
+    } catch (e) {
+      console.error('telemetry toggle failed', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Heading */}
+      <div>
+        <h4 className="text-sm font-semibold text-[var(--color-foreground)]">
+          How Deckstr uses your data
+        </h4>
+        <p className="text-xs text-[var(--color-muted-foreground)] mt-1 leading-relaxed">
+          Your vault — accounts, passwords, notes — is encrypted on your
+          machine and is <span className="text-[var(--color-foreground)]">never transmitted</span>.
+          Separately, we can collect coarse usage events to help us iterate on
+          features that actually get used. This is local-only today and fully
+          optional.
+        </p>
+      </div>
+
+      {/* Master toggle */}
+      <div className="flex items-start justify-between gap-4 pt-4 border-t border-[var(--color-border)]">
+        <div className="min-w-0">
+          <p className="font-medium text-[var(--color-foreground)]">
+            Share anonymous usage data
+          </p>
+          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+            Help make Deckstr better and data-driven with telemetry for
+            feature iteration.
+          </p>
+        </div>
+        <button
+          onClick={handleToggle}
+          disabled={enabled === null || saving}
+          className={cn(
+            'w-11 h-6 rounded-full transition-colors relative flex-shrink-0',
+            enabled ? 'bg-green-500' : 'bg-zinc-600',
+            (enabled === null || saving) && 'opacity-60 cursor-not-allowed'
+          )}
+        >
+          <div className={cn(
+            'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
+            enabled ? 'translate-x-6' : 'translate-x-1'
+          )} />
+        </button>
+      </div>
+
+      {/* What we collect */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
+          What's collected when on
+        </p>
+        <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1.5 leading-relaxed">
+          <li>• App launches and cold-boot latency</li>
+          <li>• Feature usage counts (account add/edit/delete, filters, wizard steps)</li>
+          <li>• Error codes from the UI — never error message bodies</li>
+          <li>• A salted daily-rotating hash for anonymous DAU/MAU counts</li>
+        </ul>
+        <p className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider pt-2">
+          What's never collected
+        </p>
+        <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1.5 leading-relaxed">
+          <li>• Anything inside your vault (accounts, passwords, Riot IDs, notes, tags)</li>
+          <li>• IP addresses, hostnames, or device identifiers</li>
+        </ul>
+      </div>
+
+      {/* Actions */}
+      <div className="pt-4 border-t border-[var(--color-border)] space-y-2">
+        <button
+          onClick={() => OpenUsageLogsFolder().catch(console.error)}
+          className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
+              <FolderOpen className="w-4 h-4 text-[var(--color-muted-foreground)]" />
+            </div>
+            <div className="text-left">
+              <p className="font-medium text-[var(--color-foreground)]">Open logs folder</p>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Inspect the raw JSON event records on disk
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
+        </button>
+
+        <button
+          onClick={() => OpenReleasePage('https://github.com/ajanitshimanga/Deckstr/blob/master/TELEMETRY.md').catch(console.error)}
+          className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
+              <ExternalLink className="w-4 h-4 text-[var(--color-muted-foreground)]" />
+            </div>
+            <div className="text-left">
+              <p className="font-medium text-[var(--color-foreground)]">Read the telemetry policy</p>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Full list of events, guarantees, and controls on GitHub
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
+        </button>
+      </div>
+    </div>
   )
 }
 
