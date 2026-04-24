@@ -2,7 +2,9 @@
 
 <div align="center">
 
-**The secure, local-first account manager for gamers**
+**An encrypted deck for your gaming accounts — stored locally, never in the cloud.**
+
+_Deckstr = **deck** (the stack of accounts you juggle) + **store** (encrypted, on your machine, yours alone)._
 
 [![Release](https://img.shields.io/github/v/release/ajanitshimanga/Deckstr?style=flat-square)](https://github.com/ajanitshimanga/Deckstr/releases)
 [![Downloads](https://img.shields.io/github/downloads/ajanitshimanga/Deckstr/total?style=flat-square)](https://github.com/ajanitshimanga/Deckstr/releases)
