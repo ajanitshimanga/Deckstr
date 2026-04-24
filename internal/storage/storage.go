@@ -9,14 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"OpenSmurfManager/internal/appdir"
 	"OpenSmurfManager/internal/crypto"
 	"OpenSmurfManager/internal/models"
 )
 
 const (
-	vaultFileName    = "vault.osm" // OpenSmurfManager vault file
-	vaultVersion     = 1           // Increment when making breaking changes to vault structure
-	configDirName    = "OpenSmurfManager"
+	// vaultFileName is intentionally unchanged across the Deckstr rebrand —
+	// the .osm extension lives inside the per-user data directory and isn't
+	// user-facing, so renaming it would force a second migration with no UX
+	// benefit.
+	vaultFileName = "vault.osm"
+	vaultVersion  = 1 // Increment when making breaking changes to vault structure
 )
 
 // Migration notes:
@@ -72,19 +76,15 @@ func NewStorageServiceWithPath(vaultPath string) *StorageService {
 	}
 }
 
-// getVaultPath returns the path to the vault file
+// getVaultPath returns the path to the vault file. The directory resolution
+// (and any rebrand migration) is delegated to internal/appdir so storage and
+// telemetry agree on a single canonical location.
 func getVaultPath() (string, error) {
-	configDir, err := os.UserConfigDir()
+	dir, err := appdir.Path()
 	if err != nil {
-		return "", fmt.Errorf("failed to get config directory: %w", err)
+		return "", fmt.Errorf("failed to resolve app directory: %w", err)
 	}
-
-	appDir := filepath.Join(configDir, configDirName)
-	if err := os.MkdirAll(appDir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create app directory: %w", err)
-	}
-
-	return filepath.Join(appDir, vaultFileName), nil
+	return filepath.Join(dir, vaultFileName), nil
 }
 
 // VaultExists checks if a vault file exists

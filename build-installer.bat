@@ -2,7 +2,7 @@
 setlocal
 
 echo ========================================
-echo  OpenSmurfManager Production Build
+echo  Deckstr Production Build
 echo ========================================
 echo.
 
@@ -62,6 +62,6 @@ echo ========================================
 echo  Build Complete!
 echo ========================================
 echo.
-echo Installer: build\installer\OpenSmurfManager-Setup-1.0.0.exe
+echo Installer: build\installer\Deckstr-Setup-1.0.0.exe
 echo.
 pause
