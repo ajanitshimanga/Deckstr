@@ -6,7 +6,7 @@ import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 
 export function RecoveryPhraseModal() {
-  const { pendingRecoveryPhrase, showRecoveryPhraseModal, dismissRecoveryPhraseModal, requiresPinSetup } = useAppStore()
+  const { pendingRecoveryPhrase, showRecoveryPhraseModal, dismissRecoveryPhraseModal, requiresPinSetup, isRotationPhrase } = useAppStore()
   const [showPhrase, setShowPhrase] = useState(false)
   const [isRevealing, setIsRevealing] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -55,10 +55,16 @@ export function RecoveryPhraseModal() {
             <Shield className="w-6 h-6 text-[var(--color-warning)]" />
           </div>
           <h2 className="text-xl font-bold text-[var(--color-foreground)]">
-            {isFirstTime ? 'Generate Master Recovery PIN' : 'Your New Recovery PIN'}
+            {isRotationPhrase
+              ? 'Security Update: New Recovery PIN'
+              : isFirstTime
+                ? 'Generate Master Recovery PIN'
+                : 'Your New Recovery PIN'}
           </h2>
           <p className="text-sm text-[var(--color-muted-foreground)] mt-2">
-            This 6-word PIN is your only way to recover your account if you forget your password.
+            {isRotationPhrase
+              ? "We've improved how Deckstr protects your recovery PIN. Your old PIN is no longer valid — please save this new one now, as it cannot be shown again."
+              : 'This 6-word PIN is your only way to recover your account if you forget your password.'}
           </p>
         </div>
 
@@ -68,7 +74,7 @@ export function RecoveryPhraseModal() {
           <div className="text-sm text-[var(--color-foreground)]">
             <p className="font-medium">Important:</p>
             <ul className="list-disc list-inside mt-1 text-[var(--color-muted-foreground)]">
-              <li>Write down this single-use master PIN</li>
+              <li>{isRotationPhrase ? 'Write down this new PIN — your old one no longer works' : 'Write down this single-use master PIN'}</li>
               <li>You cannot view this PIN again after closing</li>
               <li>You can regenerate a new PIN anytime with your password</li>
             </ul>
