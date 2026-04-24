@@ -16,8 +16,8 @@ import (
 // These are set at build time via ldflags
 var (
 	Version     = "dev"
-	GitHubOwner = "ajanitshimanga"    // Set via: -ldflags "-X 'OpenSmurfManager/internal/updater.GitHubOwner=username'"
-	GitHubRepo  = "OpenSmurfManager" // Set via: -ldflags "-X 'OpenSmurfManager/internal/updater.GitHubRepo=repo'"
+	GitHubOwner = "ajanitshimanga" // Set via: -ldflags "-X 'OpenSmurfManager/internal/updater.GitHubOwner=username'"
+	GitHubRepo  = "Deckstr"        // Set via: -ldflags "-X 'OpenSmurfManager/internal/updater.GitHubRepo=repo'"
 )
 
 // Release represents a GitHub release
@@ -85,7 +85,7 @@ func (u *Updater) CheckForUpdates() (*UpdateInfo, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "OpenSmurfManager-Updater")
+	req.Header.Set("User-Agent", "Deckstr-Updater")
 
 	resp, err := u.client.Do(req)
 	if err != nil {
@@ -195,7 +195,7 @@ func (u *Updater) DownloadUpdate(downloadURL string, progressChan chan<- int) (s
 
 	// Create temp file
 	tmpDir := os.TempDir()
-	tmpFile := filepath.Join(tmpDir, "OpenSmurfManager-Setup.exe")
+	tmpFile := filepath.Join(tmpDir, "Deckstr-Setup.exe")
 
 	out, err := os.Create(tmpFile)
 	if err != nil {
