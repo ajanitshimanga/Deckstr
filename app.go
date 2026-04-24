@@ -10,7 +10,9 @@ import (
 	"OpenSmurfManager/internal/models"
 	"OpenSmurfManager/internal/process"
 	"OpenSmurfManager/internal/providers"
+	"OpenSmurfManager/internal/providers/epic"
 	"OpenSmurfManager/internal/providers/riot"
+	"OpenSmurfManager/internal/providers/steam"
 	"OpenSmurfManager/internal/riotapi"
 	"OpenSmurfManager/internal/storage"
 	"OpenSmurfManager/internal/telemetry"
@@ -55,6 +57,8 @@ func (a *App) startup(ctx context.Context) {
 	// MustRegister call here.
 	a.providers = providers.NewRegistry()
 	a.providers.MustRegister(riot.New())
+	a.providers.MustRegister(epic.New())
+	a.providers.MustRegister(steam.New())
 
 	// App-start latency = time from main() to Wails runtime ready.
 	// Separately emit has_vault so DAU/MAU queries can distinguish

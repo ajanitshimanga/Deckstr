@@ -12,7 +12,12 @@ import { cn } from '../../lib/utils'
 interface Props {
   onClose: () => void
   size?: 'sm' | 'md' | 'lg'
+  // When false, clicking the blurred backdrop is a no-op. Use for high-stakes
+  // flows where a misclick would lose work the user can't easily restart.
   dismissOnBackdrop?: boolean
+  // When false, the Escape key is also a no-op. Pair with dismissOnBackdrop=false
+  // when the modal must only close via an explicit in-modal action.
+  dismissOnEsc?: boolean
   className?: string
   children: ReactNode
 }
@@ -23,21 +28,28 @@ const SIZE_CLASSES: Record<NonNullable<Props['size']>, string> = {
   lg: 'max-w-[95%] sm:max-w-lg',
 }
 
-export function Modal({ onClose, size = 'md', dismissOnBackdrop = true, className, children }: Props) {
+export function Modal({
+  onClose,
+  size = 'md',
+  dismissOnBackdrop = true,
+  dismissOnEsc = true,
+  className,
+  children,
+}: Props) {
   // Lock body scroll while open — prevents the list behind the modal from
   // scrolling when the user hits space/arrow keys.
   useEffect(() => {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && dismissOnEsc) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => {
       document.body.style.overflow = prev
       window.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, dismissOnEsc])
 
   return (
     <div

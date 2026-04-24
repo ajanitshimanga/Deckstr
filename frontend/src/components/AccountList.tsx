@@ -9,8 +9,6 @@ import {
   Pencil,
   Trash2,
   Gamepad2,
-  RefreshCw,
-  Zap,
   ChevronUp,
   ChevronDown,
   Settings,
@@ -29,6 +27,35 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from './ui/Modal'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 import { SettingsModal } from './SettingsModal'
 import { AddAccountWizard } from './AddAccountWizard'
+
+// Per-game badge styling on account cards. Unknown game IDs fall back to the
+// game's name (resolved from the gameNetworks catalog) with a neutral palette,
+// so adding a new game in models.go shows up correctly without a code change
+// here. The previous hard-coded ternary defaulted to "Valorant" for any
+// unrecognized id, which mis-labelled Rocket League cards.
+const GAME_BADGE: Record<string, { label: string; classes: string }> = {
+  lol: { label: 'League', classes: 'bg-blue-500/15 text-blue-400 border border-blue-500/20' },
+  tft: { label: 'TFT', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
+  valorant: { label: 'Valorant', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
+  rl: { label: 'Rocket League', classes: 'bg-orange-500/15 text-orange-400 border border-orange-500/20' },
+}
+
+const NEUTRAL_BADGE_CLASSES =
+  'bg-[var(--color-muted)]/40 text-[var(--color-muted-foreground)] border border-[var(--color-border)]'
+
+function gameBadge(
+  gameId: string,
+  networks: models.GameNetwork[],
+): { label: string; classes: string } {
+  const known = GAME_BADGE[gameId]
+  if (known) return known
+  for (const n of networks) {
+    for (const g of n.games) {
+      if (g.id === gameId) return { label: g.name, classes: NEUTRAL_BADGE_CLASSES }
+    }
+  }
+  return { label: gameId, classes: NEUTRAL_BADGE_CLASSES }
+}
 
 // Rank tier ordering for sorting (higher = better)
 const TIER_ORDER: Record<string, number> = {
@@ -88,7 +115,6 @@ export function AccountList() {
     selectedNetworkId,
     selectedTag,
     username,
-    isDetecting,
     detectedAccount,
     activeAccountId,
     showRecoveryPhraseModal,
@@ -96,7 +122,6 @@ export function AccountList() {
     setSelectedNetwork,
     setSelectedTag,
     removeAccount,
-    detectAndUpdateRanks,
     editAccount,
     loadAccounts,
   } = useAppStore()
@@ -239,28 +264,9 @@ export function AccountList() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={async () => {
-              const matchedId = await detectAndUpdateRanks()
-              if (matchedId) {
-                // Account found and updated
-              } else if (detectedAccount) {
-                // Account detected but not in list
-              }
-            }}
-            disabled={isDetecting}
-            leadingIcon={
-              isDetecting ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Zap className="w-3.5 h-3.5" />
-              )
-            }
-          >
-            <span className="hidden xs:inline">{isDetecting ? 'Detecting' : 'Detect'}</span>
-          </Button>
+          {/* Manual rank detection lives under Settings → Ranked → "Detect Ranks Now".
+              Auto-sync still runs in the background; this header used to expose a
+              redundant button that was only useful while wiring up the LCU pipeline. */}
           <IconButton
             ariaLabel={soundsOn ? 'Mute sounds' : 'Enable sounds'}
             title={soundsOn ? 'Mute sounds' : 'Enable sounds'}
@@ -579,19 +585,17 @@ export function AccountList() {
                     {/* Tags & Games */}
                     {(account.tags.length > 0 || (account.games && account.games.length > 0) || account.customGame) && (
                       <div className="flex items-center gap-2 mt-3 flex-wrap">
-                        {account.games && account.games.map(gameId => (
-                          <span
-                            key={gameId}
-                            className={cn(
-                              'px-2.5 py-1 text-xs rounded-md font-semibold',
-                              gameId === 'lol' && 'bg-blue-500/15 text-blue-400 border border-blue-500/20',
-                              gameId === 'tft' && 'bg-purple-500/15 text-purple-400 border border-purple-500/20',
-                              gameId === 'valorant' && 'bg-red-500/15 text-red-400 border border-red-500/20'
-                            )}
-                          >
-                            {gameId === 'lol' ? 'League' : gameId === 'tft' ? 'TFT' : 'Valorant'}
-                          </span>
-                        ))}
+                        {account.games && account.games.map(gameId => {
+                          const badge = gameBadge(gameId, gameNetworks)
+                          return (
+                            <span
+                              key={gameId}
+                              className={cn('px-2.5 py-1 text-xs rounded-md font-semibold', badge.classes)}
+                            >
+                              {badge.label}
+                            </span>
+                          )
+                        })}
                         {isCustomNetwork && account.customGame && (
                           <span className="px-2.5 py-1 text-xs rounded-md font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">
                             {account.customGame}
@@ -652,9 +656,15 @@ export function AccountList() {
         </div>
       </div>
 
-      {/* Add flow — progressive-disclosure wizard */}
+      {/* Add flow — progressive-disclosure wizard. Sticky during first-account
+          onboarding so a stray click on the blurred backdrop (or a stray Esc)
+          can't dump the user out of a flow they only just started. The Cancel
+          button stays as the explicit exit. */}
       {showAddModal && (
-        <AddAccountWizard onClose={() => setShowAddModal(false)} />
+        <AddAccountWizard
+          onClose={() => setShowAddModal(false)}
+          sticky={allAccounts.length === 0}
+        />
       )}
 
       {/* Edit flow — one-page form (user already knows the fields) */}
