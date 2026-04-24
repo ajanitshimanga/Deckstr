@@ -1,0 +1,28 @@
+filebeat.inputs:
+  - type: filestream
+    id: osm-logs
+    paths:
+      - /var/log/osm/app.log
+      - /var/log/osm/app.log.*
+    parsers:
+      # Each line is one OTel-shaped JSON record; expand into top-level
+      # fields so Kibana queries can use severityText, body, etc. directly.
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+          ignore_decoding_error: true
+
+# Disable ILM / index templates so the dev stack doesn't need extra setup.
+setup.ilm.enabled: false
+setup.template.name: osm-logs
+setup.template.pattern: "osm-logs-*"
+setup.template.enabled: true
+setup.template.overwrite: true
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  # Daily index so retention is easy to manage later.
+  index: "osm-logs-%{+yyyy.MM.dd}"
+
+logging.level: info

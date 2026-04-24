@@ -9,10 +9,14 @@ import {
   Sparkles,
   Flame,
   Plus,
+  Puzzle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { cn } from '../lib/utils'
+import { MOTION_BASE, MOTION_FOCUS } from '../lib/motion'
+import { Button } from './ui/Button'
+import { Modal, ModalBody, ModalFooter, ModalHeader } from './ui/Modal'
 import { models } from '../../wailsjs/go/models'
 
 // Progressive-disclosure add-account wizard.
@@ -25,8 +29,16 @@ type Step = 'identity' | 'network' | 'details'
 
 const STEPS: Step[] = ['identity', 'network', 'details']
 
+// Sentinel for user-defined networks we don't have first-class support for
+// (Steam, Epic, Battle.net, etc.). The user provides a label in step 3.
+export const CUSTOM_NETWORK_ID = 'custom'
+
 const NETWORK_VISUAL: Record<string, { icon: LucideIcon; color: string }> = {
   riot: { icon: Flame, color: 'text-red-400 bg-red-500/10 border-red-500/30' },
+  [CUSTOM_NETWORK_ID]: {
+    icon: Puzzle,
+    color: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
+  },
 }
 
 const GAME_VISUAL: Record<string, { icon: LucideIcon; color: string }> = {
@@ -60,6 +72,8 @@ type WizardData = {
   riotId: string
   region: string
   games: string[]
+  customNetwork: string
+  customGame: string
 }
 
 const EMPTY: WizardData = {
@@ -72,6 +86,8 @@ const EMPTY: WizardData = {
   riotId: '',
   region: 'na1',
   games: [],
+  customNetwork: '',
+  customGame: '',
 }
 
 export function AddAccountWizard({ onClose }: { onClose: () => void }) {
@@ -81,10 +97,14 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   const [submitting, setSubmitting] = useState(false)
 
   const stepIndex = STEPS.indexOf(step)
+  // Custom network needs a user-provided name before submission — otherwise
+  // the account would show up as a nameless "Custom" in the list.
+  const customReady =
+    data.networkId !== CUSTOM_NETWORK_ID || data.customNetwork.trim().length > 0
   const canAdvance =
     (step === 'identity' && data.username.length > 0 && data.password.length > 0) ||
     (step === 'network' && data.networkId.length > 0) ||
-    step === 'details'
+    (step === 'details' && customReady)
 
   const goBack = () => {
     if (stepIndex > 0) setStep(STEPS[stepIndex - 1])
@@ -103,6 +123,7 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
   const submit = async () => {
     setSubmitting(true)
     try {
+      const isCustom = data.networkId === CUSTOM_NETWORK_ID
       await addAccount({
         displayName: data.displayName || data.username,
         username: data.username,
@@ -110,9 +131,12 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
         networkId: data.networkId,
         tags: data.tags,
         notes: data.notes,
-        riotId: data.riotId,
-        region: data.region,
-        games: data.games,
+        // Riot fields only meaningful for the Riot network
+        riotId: isCustom ? '' : data.riotId,
+        region: isCustom ? '' : data.region,
+        games: isCustom ? [] : data.games,
+        customNetwork: isCustom ? data.customNetwork.trim() : '',
+        customGame: isCustom ? data.customGame.trim() : '',
         cachedRanks: [],
       })
       onClose()
@@ -125,62 +149,78 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
     setData((prev) => ({ ...prev, [key]: value }))
 
   // Picking a network pre-selects all its games (opt-out UX > opt-in).
-  // Switching to a different network resets to that network's full set.
+  // Switching to a different network resets to that network's full set and
+  // clears any previously-entered custom-network fields.
   const selectNetwork = (network: models.GameNetwork) =>
     setData((prev) =>
       prev.networkId === network.id
         ? prev
-        : { ...prev, networkId: network.id, games: network.games.map((g) => g.id) },
+        : {
+            ...prev,
+            networkId: network.id,
+            games: network.games.map((g) => g.id),
+            customNetwork: '',
+            customGame: '',
+          },
+    )
+
+  // Custom path — no pre-selected games because we don't know what the
+  // network offers. User fills in the label on step 3.
+  const selectCustom = () =>
+    setData((prev) =>
+      prev.networkId === CUSTOM_NETWORK_ID ? prev : { ...prev, networkId: CUSTOM_NETWORK_ID, games: [] },
     )
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
-      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
-        <WizardHeader step={step} />
+    <Modal onClose={onClose} size="md">
+      <WizardHeader step={step} isCustom={data.networkId === CUSTOM_NETWORK_ID} />
 
-        <div className="p-3 sm:p-4 overflow-y-auto flex-1 space-y-3 sm:space-y-4">
-          {step === 'identity' && <IdentityStep data={data} update={update} />}
-          {step === 'network' && (
-            <NetworkStep data={data} onSelectNetwork={selectNetwork} networks={gameNetworks} />
-          )}
-          {step === 'details' && (
-            <DetailsStep data={data} update={update} networks={gameNetworks} />
-          )}
-        </div>
+      <ModalBody className="space-y-3 sm:space-y-4">
+        {step === 'identity' && <IdentityStep data={data} update={update} />}
+        {step === 'network' && (
+          <NetworkStep
+            data={data}
+            onSelectNetwork={selectNetwork}
+            onSelectCustom={selectCustom}
+            networks={gameNetworks}
+          />
+        )}
+        {step === 'details' && (
+          <DetailsStep data={data} update={update} networks={gameNetworks} />
+        )}
+      </ModalBody>
 
-        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={goBack}
-            disabled={submitting}
-            className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {stepIndex > 0 && <ChevronLeft className="w-4 h-4" />}
-            {stepIndex === 0 ? 'Cancel' : 'Back'}
-          </button>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={!canAdvance || submitting}
-            className={cn(
-              'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors text-white',
-              'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90',
-              'disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            {step === 'details' ? (submitting ? 'Adding...' : 'Add Account') : 'Next'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <Button
+          fullWidth
+          variant="secondary"
+          onClick={goBack}
+          disabled={submitting}
+          leadingIcon={stepIndex > 0 ? <ChevronLeft className="w-4 h-4" /> : undefined}
+        >
+          {stepIndex === 0 ? 'Cancel' : 'Back'}
+        </Button>
+        <Button
+          fullWidth
+          variant="primary"
+          onClick={goNext}
+          disabled={!canAdvance || submitting}
+        >
+          {step === 'details' ? (submitting ? 'Adding...' : 'Add Account') : 'Next'}
+        </Button>
+      </ModalFooter>
+    </Modal>
   )
 }
 
-function WizardHeader({ step }: { step: Step }) {
+function WizardHeader({ step, isCustom }: { step: Step; isCustom: boolean }) {
   const titles: Record<Step, { title: string; subtitle: string }> = {
     identity: { title: 'Add Account', subtitle: 'Start with your sign-in credentials' },
     network: { title: 'Choose Network', subtitle: 'Which platform is this account for?' },
-    details: { title: 'Finishing Touches', subtitle: 'All optional — skip to save' },
+    details: {
+      title: 'Finishing Touches',
+      subtitle: isCustom ? 'Name your platform and you\'re done' : 'All optional — skip to save',
+    },
   }
   const { title, subtitle } = titles[step]
   const stepIndex = STEPS.indexOf(step)
@@ -263,10 +303,12 @@ function IdentityStep({
 function NetworkStep({
   data,
   onSelectNetwork,
+  onSelectCustom,
   networks,
 }: {
   data: WizardData
   onSelectNetwork: (network: models.GameNetwork) => void
+  onSelectCustom: () => void
   networks: models.GameNetwork[]
 }) {
   const [query, setQuery] = useState('')
@@ -274,6 +316,15 @@ function NetworkStep({
     () => networks.filter((n) => fuzzyMatch(query, n.name) || fuzzyMatch(query, n.id)),
     [networks, query],
   )
+  // The Custom tile is the escape hatch for platforms we don't cover — show it
+  // whenever the query is empty or fuzzy-matches "custom"/"other" so it stays
+  // discoverable, especially when no real networks match.
+  const q = query.trim().toLowerCase()
+  const showCustom =
+    q.length === 0 ||
+    fuzzyMatch(query, 'Custom') ||
+    fuzzyMatch(query, 'Other') ||
+    filtered.length === 0
 
   return (
     <>
@@ -294,23 +345,32 @@ function NetworkStep({
         />
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="text-sm text-[var(--color-muted-foreground)] text-center py-8">
-          No networks match "{query}".
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+        {filtered.map((n) => (
+          <Tile
+            key={n.id}
+            selected={data.networkId === n.id}
+            onClick={() => onSelectNetwork(n)}
+            visual={NETWORK_VISUAL[n.id] || DEFAULT_VISUAL}
+            title={n.name}
+            subtitle={`${n.games.length} game${n.games.length === 1 ? '' : 's'}`}
+          />
+        ))}
+        {showCustom && (
+          <Tile
+            selected={data.networkId === CUSTOM_NETWORK_ID}
+            onClick={onSelectCustom}
+            visual={NETWORK_VISUAL[CUSTOM_NETWORK_ID]}
+            title="Custom"
+            subtitle="Not listed? Name your own"
+          />
+        )}
+      </div>
+
+      {filtered.length === 0 && q.length > 0 && (
+        <p className="text-xs text-[var(--color-muted-foreground)] text-center pt-1">
+          No match for "{query}" — add it as Custom.
         </p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-          {filtered.map((n) => (
-            <Tile
-              key={n.id}
-              selected={data.networkId === n.id}
-              onClick={() => onSelectNetwork(n)}
-              visual={NETWORK_VISUAL[n.id] || DEFAULT_VISUAL}
-              title={n.name}
-              subtitle={`${n.games.length} game${n.games.length === 1 ? '' : 's'}`}
-            />
-          ))}
-        </div>
       )}
     </>
   )
@@ -327,6 +387,7 @@ function DetailsStep({
 }) {
   const { tags: availableTags, createTag } = useAppStore()
   const network = networks.find((n) => n.id === data.networkId)
+  const isCustom = data.networkId === CUSTOM_NETWORK_ID
   const [gameQuery, setGameQuery] = useState('')
   const [newTag, setNewTag] = useState('')
   const filteredGames = useMemo(
@@ -365,7 +426,31 @@ function DetailsStep({
 
   return (
     <>
-      {network && network.games.length > 0 && (
+      {isCustom && (
+        <>
+          <Field label="Network name" required>
+            <input
+              type="text"
+              value={data.customNetwork}
+              onChange={(e) => update('customNetwork', e.target.value)}
+              placeholder="e.g. Steam, Epic Games, Battle.net"
+              autoFocus
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Game">
+            <input
+              type="text"
+              value={data.customGame}
+              onChange={(e) => update('customGame', e.target.value)}
+              placeholder="Optional — e.g. CS2, Apex Legends, Overwatch"
+              className={inputClass}
+            />
+          </Field>
+        </>
+      )}
+
+      {!isCustom && network && network.games.length > 0 && (
         <Field label="Games">
           <div className="relative mb-2">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-muted-foreground)]" />
@@ -539,22 +624,26 @@ function Tile({
       type="button"
       onClick={onClick}
       className={cn(
-        'group relative flex flex-col items-center gap-2 p-3 sm:p-4 rounded-xl border-2 transition-all',
-        'hover:scale-[1.02] active:scale-[0.98]',
+        'group relative flex flex-col items-center gap-2 p-3 sm:p-4 rounded-xl border-2',
+        MOTION_BASE,
+        MOTION_FOCUS,
+        'hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100',
         selected
-          ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-          : 'border-[var(--color-border)] bg-[var(--color-muted)]/30 hover:border-[var(--color-muted-foreground)]/40',
+          ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 shadow-[0_0_0_3px_var(--color-primary)]/10 ring-1 ring-[var(--color-primary)]/30'
+          : 'border-[var(--color-border)] bg-[var(--color-muted)]/30 hover:border-[var(--color-muted-foreground)]/40 hover:bg-[var(--color-muted)]/50 hover:shadow-md',
       )}
       aria-pressed={selected}
     >
       {selected && (
-        <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
+        <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-md shadow-[var(--color-primary)]/30 animate-pop-in">
           <Check className="w-3 h-3 text-white" />
         </span>
       )}
       <div
         className={cn(
           'w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center border',
+          MOTION_BASE,
+          'group-hover:scale-110 motion-reduce:group-hover:scale-100',
           visual.color,
         )}
       >

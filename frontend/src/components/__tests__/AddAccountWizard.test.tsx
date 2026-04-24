@@ -203,4 +203,106 @@ describe('AddAccountWizard', () => {
     expect(screen.getByPlaceholderText('Enter username')).toHaveValue('smurf1')
     expect(screen.getByPlaceholderText('Enter password')).toHaveValue('pw')
   })
+
+  it('shows a Custom tile on the network step as an escape hatch', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    expect(screen.getByRole('button', { name: /custom/i })).toBeInTheDocument()
+  })
+
+  it('still shows Custom when no networks match the query', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Type a nonsense query that matches no real network
+    await user.type(screen.getByLabelText(/search networks/i), 'zzzzfortnite')
+
+    expect(screen.queryByRole('button', { name: /riot games/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /steam/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /custom/i })).toBeInTheDocument()
+  })
+
+  it('requires a network name before submitting a Custom account', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    // Step 1
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Step 2 — pick Custom
+    await user.click(screen.getByRole('button', { name: /custom/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Step 3 — Add Account should be disabled until network name is entered
+    const submit = screen.getByRole('button', { name: /add account/i })
+    expect(submit).toBeDisabled()
+
+    await user.type(screen.getByPlaceholderText(/steam, epic games/i), 'Steam')
+    expect(submit).toBeEnabled()
+  })
+
+  it('submits a Custom account with customNetwork + customGame and no riot/games fields', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddAccountWizard onClose={onClose} />)
+
+    // Step 1
+    await user.type(screen.getByPlaceholderText('Enter username'), 'cs-main')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'hunter2')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Step 2 — Custom
+    await user.click(screen.getByRole('button', { name: /custom/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Step 3 — custom inputs
+    await user.type(screen.getByPlaceholderText(/steam, epic games/i), 'Steam')
+    await user.type(screen.getByPlaceholderText(/cs2, apex legends/i), 'Counter-Strike 2')
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    expect(addAccount).toHaveBeenCalledTimes(1)
+    const payload = addAccount.mock.calls[0][0]
+    expect(payload.networkId).toBe('custom')
+    expect(payload.customNetwork).toBe('Steam')
+    expect(payload.customGame).toBe('Counter-Strike 2')
+    expect(payload.games).toEqual([])
+    expect(payload.riotId).toBe('')
+    expect(payload.region).toBe('')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('clears custom fields when switching back from Custom to a real network', async () => {
+    const user = userEvent.setup()
+    render(<AddAccountWizard onClose={vi.fn()} />)
+
+    await user.type(screen.getByPlaceholderText('Enter username'), 'smurf1')
+    await user.type(screen.getByPlaceholderText('Enter password'), 'pw')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+
+    // Pick Custom, fill the name, then switch to Riot
+    await user.click(screen.getByRole('button', { name: /custom/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.type(screen.getByPlaceholderText(/steam, epic games/i), 'Steam')
+    await user.click(screen.getByRole('button', { name: /back/i }))
+    await user.click(screen.getByRole('button', { name: /riot games/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /add account/i }))
+
+    const payload = addAccount.mock.calls[0][0]
+    expect(payload.networkId).toBe('riot')
+    expect(payload.customNetwork).toBe('')
+    expect(payload.customGame).toBe('')
+    expect(payload.games).toEqual(['lol', 'tft', 'valorant'])
+  })
 })

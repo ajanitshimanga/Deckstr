@@ -155,7 +155,7 @@ export function UnlockScreen() {
   // Recovery Mode UI
   if (isRecoveryMode) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-[var(--color-background)]">
+      <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[var(--color-background)] overflow-y-auto">
         <div className="w-full max-w-md">
           {/* Header */}
           <div className="text-center mb-8">

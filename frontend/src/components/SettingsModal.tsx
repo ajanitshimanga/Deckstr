@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import {
   X,
@@ -28,6 +28,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const { lock } = useAppStore()
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
 
+  // Esc to dismiss + body scroll lock, matching the Modal primitive's behaviour
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+
   const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: 'General', icon: <User className="w-4 h-4" /> },
     { id: 'security', label: 'Security', icon: <Shield className="w-4 h-4" /> },
@@ -36,8 +48,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   ]
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="w-full max-w-2xl h-[500px] bg-[var(--color-card)] rounded-xl border border-[var(--color-border)] overflow-hidden shadow-2xl flex">
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl h-[500px] bg-[var(--color-card)] rounded-xl border border-[var(--color-border)] overflow-hidden shadow-2xl shadow-black/40 flex animate-scale-in relative before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-white/[0.06] before:pointer-events-none"
+      >
         {/* Sidebar */}
         <div className="w-48 bg-[var(--color-background)] border-r border-[var(--color-border)] flex flex-col">
           <div className="p-4 border-b border-[var(--color-border)]">
@@ -49,9 +67,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 motion-reduce:transition-none active:scale-[0.98] motion-reduce:active:scale-100',
                   activeTab === tab.id
-                    ? 'bg-[var(--color-primary)] text-white'
+                    ? 'bg-[var(--color-primary)] text-white shadow-sm shadow-[var(--color-primary)]/25'
                     : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50'
                 )}
               >

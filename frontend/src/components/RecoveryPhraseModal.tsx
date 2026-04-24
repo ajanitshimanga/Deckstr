@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { Copy, Check, Shield, AlertTriangle } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { Modal } from './ui/Modal'
+import { Button } from './ui/Button'
 
 export function RecoveryPhraseModal() {
   const { pendingRecoveryPhrase, showRecoveryPhraseModal, dismissRecoveryPhraseModal, requiresPinSetup } = useAppStore()
@@ -45,8 +47,8 @@ export function RecoveryPhraseModal() {
   const isFirstTime = requiresPinSetup
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[var(--color-card)] rounded-xl shadow-xl max-w-md w-full p-6 space-y-6">
+    <Modal onClose={handleDismiss} dismissOnBackdrop={false} size="md">
+      <div className="p-6 space-y-6">
         {/* Header */}
         <div className="text-center">
           <div className="mx-auto w-12 h-12 bg-[var(--color-warning)]/20 rounded-full flex items-center justify-center mb-4">
@@ -131,15 +133,12 @@ export function RecoveryPhraseModal() {
 
         {/* Continue button - only shown after reveal */}
         {showPhrase && (
-          <button
-            onClick={handleDismiss}
-            className="w-full py-3 rounded-lg font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white cursor-pointer transition-all duration-200 animate-glow"
-          >
+          <Button fullWidth size="lg" onClick={handleDismiss}>
             I've Saved My Recovery PIN
-          </button>
+          </Button>
         )}
 
-        {/* Shimmer and glow animations */}
+        {/* Shimmer animation for reveal */}
         <style>{`
           .shimmer {
             background: linear-gradient(
@@ -155,16 +154,8 @@ export function RecoveryPhraseModal() {
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
           }
-          .animate-glow {
-            animation: glow 1s ease-in-out;
-          }
-          @keyframes glow {
-            0% { box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb, 59, 130, 246), 0.5); }
-            50% { box-shadow: 0 0 20px 4px rgba(var(--color-primary-rgb, 59, 130, 246), 0.3); }
-            100% { box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb, 59, 130, 246), 0); }
-          }
         `}</style>
       </div>
-    </div>
+    </Modal>
   )
 }
