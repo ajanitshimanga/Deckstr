@@ -274,8 +274,9 @@ func DefaultGameNetworks() []GameNetwork {
 			},
 		},
 		{
-			ID:   "epic",
-			Name: "Epic Games",
+			ID:            "epic",
+			Name:          "Epic Games",
+			SharedAccount: true, // one Epic login spans every Epic title (Fortnite, Rocket League, …)
 			Games: []Game{
 				{
 					ID:        "rl",
@@ -290,6 +291,22 @@ func DefaultGameNetworks() []GameNetwork {
 					},
 					ClientTitle:   "Epic Games Launcher",
 					GameProcesses: rocketLeagueGameProcesses,
+				},
+				{
+					ID:        "fortnite",
+					Name:      "Fortnite",
+					NetworkID: "epic",
+					ClientProcess: PlatformProcesses{
+						Windows: []string{"EpicGamesLauncher.exe"},
+						MacOS:   []string{"Epic Games Launcher"},
+					},
+					ClientTitle: "Epic Games Launcher",
+					GameProcesses: PlatformProcesses{
+						// FortniteClient-Win64-Shipping.exe is the actual gameplay
+						// process; FortniteLauncher.exe is the shell that spawns it.
+						Windows: []string{"FortniteClient-Win64-Shipping.exe", "FortniteLauncher.exe"},
+						// macOS support was discontinued in 2020 (Apple/Epic dispute).
+					},
 				},
 			},
 		},

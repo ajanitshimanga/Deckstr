@@ -13,6 +13,7 @@ import {
   Rocket,
   Store,
   Gamepad,
+  Crown,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
@@ -54,6 +55,7 @@ const GAME_VISUAL: Record<string, { icon: LucideIcon; color: string }> = {
   tft: { icon: Sparkles, color: 'text-purple-300 bg-purple-500/10 border-purple-500/30' },
   valorant: { icon: Crosshair, color: 'text-rose-300 bg-rose-500/10 border-rose-500/30' },
   rl: { icon: Rocket, color: 'text-orange-300 bg-orange-500/10 border-orange-500/30' },
+  fortnite: { icon: Crown, color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30' },
   [CUSTOM_GAME_ID]: {
     icon: Puzzle,
     color: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
@@ -192,8 +194,13 @@ export function AddAccountWizard({
         // One record per pick — multi-store games (Rocket League on Epic vs
         // Steam) require the user to run the wizard again for the second
         // store, since each storefront uses different credentials.
-        const games = uniqueGames(data.gameId, data.alsoPlaysGames)
         const networkId = data.selectedNetwork
+        // Auto-link siblings only on the network the user actually picked —
+        // Rocket League under Epic auto-tags Fortnite (one Epic login covers
+        // both), but the same pick under Steam doesn't, since Fortnite isn't
+        // a Steam title and Steam isn't shared-login anyway.
+        const autoLinked = siblingsForNetwork(data.gameId, networkId, gameNetworks)
+        const games = uniqueGames(data.gameId, [...data.alsoPlaysGames, ...autoLinked])
         await addAccount({
           displayName: data.displayName || data.username,
           username: data.username,
@@ -236,7 +243,11 @@ export function AddAccountWizard({
             ...prev,
             gameId: game.id,
             selectedNetwork: game.networks.length === 1 ? game.networks[0].id : '',
-            alsoPlaysGames: linkedSiblings(game, gameNetworks),
+            // alsoPlaysGames stays empty — it now only carries the user's
+            // manual opt-ins on non-shared networks. Shared-account siblings
+            // (Riot LoL→TFT/Valorant, Epic RL↔Fortnite) are auto-unioned at
+            // submit based on which network the user actually picks.
+            alsoPlaysGames: [],
             customNetwork: '',
             customGame: '',
           },
@@ -321,22 +332,19 @@ function uniqueGames(primary: string, also: string[]): string[] {
   return Array.from(set)
 }
 
-// linkedSiblings returns the sibling games that share a login with the given
-// game — i.e. games on a SharedAccount network the chosen game lives on.
-// Used to default-tag an account with every game its credentials grant access
-// to (Riot LoL pick → also TFT + Valorant). Returns [] for storefronts where
-// each game is a separate purchase.
-function linkedSiblings(game: CatalogGame, networks: models.GameNetwork[]): string[] {
-  const linked = new Set<string>()
-  for (const cn of game.networks) {
-    if (!cn.sharedAccount) continue
-    const network = networks.find((n) => n.id === cn.id)
-    if (!network) continue
-    for (const g of network.games) {
-      if (g.id !== game.id) linked.add(g.id)
-    }
-  }
-  return Array.from(linked)
+// siblingsForNetwork returns the games that share a login with `gameId` on
+// the specific `networkId` the user picked. Used at submit time to expand the
+// account's games array — Rocket League under Epic auto-tags Fortnite (Epic
+// is shared-login), but Rocket League under Steam tags only itself. Returns
+// [] for non-shared networks or when the network has no siblings.
+function siblingsForNetwork(
+  gameId: string,
+  networkId: string,
+  networks: models.GameNetwork[],
+): string[] {
+  const network = networks.find((n) => n.id === networkId)
+  if (!network || !network.sharedAccount) return []
+  return network.games.filter((g) => g.id !== gameId).map((g) => g.id)
 }
 
 function WizardHeader({

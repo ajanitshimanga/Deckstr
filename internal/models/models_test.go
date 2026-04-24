@@ -68,13 +68,15 @@ func TestRocketLeagueSharesGameProcessesAcrossStores(t *testing.T) {
 }
 
 // TestSharedAccountFlag pins the platform-truth invariants the wizard relies
-// on: Riot binds one login to every Riot game (LoL/TFT/Valorant); Steam and
-// Epic do not. A regression here would cause the wizard to either over-tag
-// Steam/Epic accounts with sibling games or under-tag Riot accounts.
+// on: Riot binds one login to every Riot game (LoL/TFT/Valorant); Epic binds
+// one login to every Epic title (Rocket League, Fortnite, …); Steam currently
+// has only one game on it so the flag stays false until siblings appear. A
+// regression here would either over-tag Steam accounts with phantom siblings
+// or under-tag Epic/Riot accounts that genuinely share a login.
 func TestSharedAccountFlag(t *testing.T) {
 	want := map[string]bool{
 		"riot":  true,
-		"epic":  false,
+		"epic":  true,
 		"steam": false,
 	}
 	for _, n := range DefaultGameNetworks() {
@@ -85,6 +87,23 @@ func TestSharedAccountFlag(t *testing.T) {
 		if n.SharedAccount != expected {
 			t.Errorf("network %q: SharedAccount = %v, want %v", n.ID, n.SharedAccount, expected)
 		}
+	}
+}
+
+// TestFortniteUnderEpicOnly pins that Fortnite ships only on Epic — Apple's
+// 2020 lawsuit means it's been pulled from macOS/iOS and it's never been on
+// Steam. A regression would mis-route Fortnite accounts to Steam in the wizard.
+func TestFortniteUnderEpicOnly(t *testing.T) {
+	var hostingNetworks []string
+	for _, n := range DefaultGameNetworks() {
+		for _, g := range n.Games {
+			if g.ID == "fortnite" {
+				hostingNetworks = append(hostingNetworks, n.ID)
+			}
+		}
+	}
+	if len(hostingNetworks) != 1 || hostingNetworks[0] != "epic" {
+		t.Errorf("Fortnite must ship only under epic, got %v", hostingNetworks)
 	}
 }
 

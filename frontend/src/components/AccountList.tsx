@@ -38,6 +38,7 @@ const GAME_BADGE: Record<string, { label: string; classes: string }> = {
   tft: { label: 'TFT', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
   valorant: { label: 'Valorant', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
   rl: { label: 'Rocket League', classes: 'bg-orange-500/15 text-orange-400 border border-orange-500/20' },
+  fortnite: { label: 'Fortnite', classes: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' },
 }
 
 const NEUTRAL_BADGE_CLASSES =
