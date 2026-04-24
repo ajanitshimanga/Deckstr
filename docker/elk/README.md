@@ -1,6 +1,6 @@
 # Local ELK Stack
 
-Kibana dashboards backed by your own OpenSmurfManager telemetry, running
+Kibana dashboards backed by your own Deckstr telemetry, running
 entirely on your machine. Use this to iterate on queries and dashboards
 while the hosted telemetry endpoint is still in the backlog.
 
@@ -17,20 +17,21 @@ the drive containing your logs.
 
 ## Wire up your logs directory
 
-The desktop client writes to `%APPDATA%\OpenSmurfManager\logs\` on
-Windows. Point the stack at it via the `OSM_LOGS_DIR` env var.
+The desktop client writes to `%APPDATA%\Deckstr\logs\` on
+Windows (legacy `OpenSmurfManager\` installs are auto-migrated on first
+launch). Point the stack at it via the `OSM_LOGS_DIR` env var.
 
 **PowerShell:**
 
 ```powershell
-$env:OSM_LOGS_DIR = "$env:APPDATA\OpenSmurfManager\logs"
+$env:OSM_LOGS_DIR = "$env:APPDATA\Deckstr\logs"
 docker compose -f docker/elk/docker-compose.yml up -d
 ```
 
 **Git Bash / WSL:**
 
 ```bash
-export OSM_LOGS_DIR="$APPDATA/OpenSmurfManager/logs"
+export OSM_LOGS_DIR="$APPDATA/Deckstr/logs"
 docker compose -f docker/elk/docker-compose.yml up -d
 ```
 

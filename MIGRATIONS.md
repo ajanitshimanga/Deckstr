@@ -82,7 +82,7 @@ If a user needs to rollback to a previous version:
 
 1. **Data-compatible versions**: Just install old version
 2. **After vault version bump**: Keep backup of pre-migration vault file
-   - Location: `%APPDATA%\OpenSmurfManager\vault.osm.backup.v{N}`
+   - Location: `%APPDATA%\Deckstr\vault.osm.backup.v{N}`
 
 ---
 

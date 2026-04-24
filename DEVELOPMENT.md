@@ -1,6 +1,6 @@
 # Development Guide
 
-This document captures development practices, patterns, and decision-making frameworks for OpenSmurfManager.
+This document captures development practices, patterns, and decision-making frameworks for Deckstr.
 
 ## Table of Contents
 1. [Backwards Compatibility](#backwards-compatibility)

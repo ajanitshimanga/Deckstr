@@ -4,14 +4,14 @@
 
 **The secure, local-first account manager for gamers**
 
-[![Release](https://img.shields.io/github/v/release/ajanitshimanga/OpenSmurfManager?style=flat-square)](https://github.com/ajanitshimanga/OpenSmurfManager/releases)
-[![Downloads](https://img.shields.io/github/downloads/ajanitshimanga/OpenSmurfManager/total?style=flat-square)](https://github.com/ajanitshimanga/OpenSmurfManager/releases)
+[![Release](https://img.shields.io/github/v/release/ajanitshimanga/Deckstr?style=flat-square)](https://github.com/ajanitshimanga/Deckstr/releases)
+[![Downloads](https://img.shields.io/github/downloads/ajanitshimanga/Deckstr/total?style=flat-square)](https://github.com/ajanitshimanga/Deckstr/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows)](https://github.com/ajanitshimanga/OpenSmurfManager/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows)](https://github.com/ajanitshimanga/Deckstr/releases)
 
 <br />
 
-[<img src="https://img.shields.io/badge/Download_for_Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="40">](https://github.com/ajanitshimanga/OpenSmurfManager/releases/latest)
+[<img src="https://img.shields.io/badge/Download_for_Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="40">](https://github.com/ajanitshimanga/Deckstr/releases/latest)
 
 [Features](#features) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
@@ -82,7 +82,7 @@ This isn't about stomping lower-ranked lobbies—it's about being able to queue 
 
 ### Quick Start (Windows)
 
-1. Download the latest installer from [Releases](https://github.com/ajanitshimanga/OpenSmurfManager/releases)
+1. Download the latest installer from [Releases](https://github.com/ajanitshimanga/Deckstr/releases)
 2. Run `Deckstr-Setup-x.x.x.exe`
 3. Create your account with a strong master password
 4. Start adding your gaming accounts!
@@ -132,7 +132,7 @@ These features are planned and relatively easy to implement:
 
 ### Want to Suggest a Feature?
 
-[Open an issue](https://github.com/ajanitshimanga/OpenSmurfManager/issues) with the `enhancement` label!
+[Open an issue](https://github.com/ajanitshimanga/Deckstr/issues) with the `enhancement` label!
 
 ---
 
@@ -188,8 +188,8 @@ Please email security concerns privately. Do not open public issues for vulnerab
 
 ```bash
 # Clone the repo
-git clone https://github.com/ajanitshimanga/OpenSmurfManager.git
-cd OpenSmurfManager
+git clone https://github.com/ajanitshimanga/Deckstr.git
+cd Deckstr
 
 # Install frontend dependencies
 cd frontend && npm install && cd ..
@@ -322,6 +322,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 **Made with security in mind**
 
-[Report Bug](https://github.com/ajanitshimanga/OpenSmurfManager/issues) · [Request Feature](https://github.com/ajanitshimanga/OpenSmurfManager/issues) · [Sponsor](https://github.com/sponsors/ajanitshimanga)
+[Report Bug](https://github.com/ajanitshimanga/Deckstr/issues) · [Request Feature](https://github.com/ajanitshimanga/Deckstr/issues) · [Sponsor](https://github.com/sponsors/ajanitshimanga)
 
 </div>

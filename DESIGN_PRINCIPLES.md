@@ -1,6 +1,6 @@
 # Design Principles
 
-Core philosophy guiding OpenSmurfManager development.
+Core philosophy guiding Deckstr development.
 
 ## 1. Lightweight First
 

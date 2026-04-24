@@ -1,8 +1,8 @@
-# OpenSmurfManager - Development Skills & Context
+# Deckstr - Development Skills & Context
 
 ## Project Overview
 
-OpenSmurfManager is a secure, local-first account manager for gamers built with:
+Deckstr (formerly OpenSmurfManager) is a secure, local-first account manager for gamers built with:
 - **Backend**: Go 1.21+
 - **Frontend**: React + TypeScript + Zustand + Tailwind CSS
 - **Framework**: Wails v2 (Go + WebView2 desktop apps)
@@ -12,7 +12,7 @@ OpenSmurfManager is a secure, local-first account manager for gamers built with:
 ## Project Structure
 
 ```
-OpenSmurfManager/
+Deckstr/
 ├── frontend/           # React + TypeScript UI
 │   ├── src/
 │   │   ├── components/ # UI components (AccountList, UnlockScreen, UpdateModal)
@@ -241,7 +241,7 @@ go test ./internal/crypto -v
 ## Known Issues / TODO
 
 ### [Issue #1] Desktop/Taskbar Icon Shows Wails Logo
-**Status**: Open - https://github.com/ajanitshimanga/OpenSmurfManager/issues/1
+**Status**: Open - https://github.com/ajanitshimanga/Deckstr/issues/1
 
 **Problem**: After install/update, desktop shortcut and taskbar show Wails logo, but the actual .exe has correct S logo.
 
@@ -288,7 +288,7 @@ wails generate module
 
 - **Encryption**: AES-256-GCM with random nonce per save
 - **Key Derivation**: Argon2id (64MB memory, OWASP recommended)
-- **Storage**: Local only at `%APPDATA%\OpenSmurfManager\vault.osm`
+- **Storage**: Local only at `%APPDATA%\Deckstr\vault.osm`
 - **Plain Text**: Only username and password hint (for login screen)
 - **Encrypted**: All account credentials, settings, tags
 

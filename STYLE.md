@@ -1,4 +1,4 @@
-# OpenSmurfManager Style Guide
+# Deckstr Style Guide
 
 ## Table of Contents
 
@@ -117,7 +117,7 @@ Style: `px-2.5 py-1 rounded-full text-xs font-semibold border`
 ## Project Structure
 
 ```
-OpenSmurfManager/
+Deckstr/
 ├── main.go                     # Wails entry point, window config
 ├── app.go                      # App bindings exposed to frontend
 ├── wails.json                  # Wails configuration
@@ -174,7 +174,7 @@ OpenSmurfManager/
 │
 └── build/
     └── bin/
-        └── OpenSmurfManager.exe
+        └── Deckstr.exe
 ```
 
 ---
@@ -207,13 +207,13 @@ OpenSmurfManager/
 build-installer.bat
 ```
 
-**Output:** `build\installer\OpenSmurfManager-Setup-1.0.0.exe`
+**Output:** `build\installer\Deckstr-Setup-1.0.0.exe`
 
 **Data locations:**
 | Type | Location |
 |------|----------|
-| Application | `C:\Program Files\OpenSmurfManager\` |
-| User data | `%APPDATA%\OpenSmurfManager\vault.osm` |
+| Application | `C:\Program Files\Deckstr\` |
+| User data | `%APPDATA%\Deckstr\vault.osm` |
 
 ---
 
@@ -237,7 +237,7 @@ build-installer.bat
    ```batch
    build-installer.bat
    ```
-   Then upload `build/installer/OpenSmurfManager-Setup-1.1.0.exe` to GitHub Releases
+   Then upload `build/installer/Deckstr-Setup-1.1.0.exe` to GitHub Releases
 
 3. **Automated release (recommended):**
    ```bash
@@ -248,5 +248,5 @@ build-installer.bat
 
 **Build flags for version info:**
 ```
--ldflags "-X 'OpenSmurfManager/internal/updater.Version=1.0.0' -X 'OpenSmurfManager/internal/updater.GitHubOwner=username' -X 'OpenSmurfManager/internal/updater.GitHubRepo=OpenSmurfManager'"
+-ldflags "-X 'OpenSmurfManager/internal/updater.Version=1.0.0' -X 'OpenSmurfManager/internal/updater.GitHubOwner=username' -X 'OpenSmurfManager/internal/updater.GitHubRepo=Deckstr'"
 ```

@@ -1,4 +1,4 @@
-# Contributing to OpenSmurfManager
+# Contributing to Deckstr
 
 Thanks for your interest in contributing! This guide will help you understand the codebase, contribution process, and review requirements.
 
@@ -15,7 +15,7 @@ Thanks for your interest in contributing! This guide will help you understand th
 ## Architecture Overview
 
 ```
-OpenSmurfManager/
+Deckstr/
 ├── internal/
 │   ├── models/        # Data structures (GENERIC - works for any platform)
 │   ├── crypto/        # AES-256-GCM encryption (GENERIC - don't modify)
@@ -77,8 +77,8 @@ Before starting a new feature:
 # - Wails CLI (go install github.com/wailsapp/wails/v2/cmd/wails@latest)
 
 # Clone and run
-git clone https://github.com/yourusername/OpenSmurfManager.git
-cd OpenSmurfManager
+git clone https://github.com/yourusername/Deckstr.git
+cd Deckstr
 wails dev
 
 # Run tests
