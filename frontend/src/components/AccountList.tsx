@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useAppStore } from '../stores/appStore'
 import {
   Search,
@@ -14,9 +14,18 @@ import {
   ChevronUp,
   ChevronDown,
   Settings,
+  Check as CheckIcon,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { MOTION_BASE, MOTION_FOCUS } from '../lib/motion'
+import { getSoundsEnabled, setSoundsEnabled, playTick } from '../lib/sound'
 import { models, providers } from '../../wailsjs/go/models'
+import { Button } from './ui/Button'
+import { IconButton } from './ui/IconButton'
+import { Card } from './ui/Card'
+import { Modal, ModalBody, ModalFooter, ModalHeader } from './ui/Modal'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
 import { SettingsModal } from './SettingsModal'
 import { AddAccountWizard } from './AddAccountWizard'
@@ -82,6 +91,7 @@ export function AccountList() {
     isDetecting,
     detectedAccount,
     activeAccountId,
+    showRecoveryPhraseModal,
     setSearchQuery,
     setSelectedNetwork,
     setSelectedTag,
@@ -98,7 +108,31 @@ export function AccountList() {
     () => allAccounts.some(a => a.networkId === 'custom'),
     [allAccounts],
   )
+  // Sound mute toggle — lives in the main header so it's always reachable,
+  // not buried inside Settings. Persists via sound.ts's localStorage.
+  const [soundsOn, setSoundsOn] = useState(getSoundsEnabled())
+  const toggleSounds = () => {
+    const next = !soundsOn
+    setSoundsEnabled(next)
+    setSoundsOn(next)
+    if (next) playTick() // confirmation pip on enable only
+  }
   const [showAddModal, setShowAddModal] = useState(false)
+  // Onboarding: drop first-time / zero-account users straight into the Add
+  // Account wizard so the happy-path setup is obvious without any copy
+  // telling them what to do. Offer once per session — if they dismiss, they
+  // land on the empty state and can add later via the Add Account button.
+  const [onboardingOffered, setOnboardingOffered] = useState(false)
+  useEffect(() => {
+    if (onboardingOffered) return
+    if (showRecoveryPhraseModal) return // PIN must be saved first
+    if (allAccounts.length > 0) {
+      setOnboardingOffered(true)
+      return
+    }
+    setShowAddModal(true)
+    setOnboardingOffered(true)
+  }, [allAccounts.length, showRecoveryPhraseModal, onboardingOffered])
   const [editingAccount, setEditingAccount] = useState<models.Account | null>(null)
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -188,7 +222,7 @@ export function AccountList() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-b from-[var(--color-background)] to-[var(--color-card)]">
+    <div className="flex-1 min-h-0 flex flex-col bg-gradient-to-b from-[var(--color-background)] to-[var(--color-card)]">
       {/* Header - Instagram-style clean header */}
       <header className="wails-drag flex items-center justify-between px-4 sm:px-5 lg:px-6 py-2.5 sm:py-3 bg-[var(--color-background)] border-b border-[var(--color-border)]/30 shrink-0">
         <div className="flex items-center gap-2.5 sm:gap-3">
@@ -205,7 +239,9 @@ export function AccountList() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <button
+          <Button
+            size="sm"
+            variant="primary"
             onClick={async () => {
               const matchedId = await detectAndUpdateRanks()
               if (matchedId) {
@@ -215,28 +251,30 @@ export function AccountList() {
               }
             }}
             disabled={isDetecting}
-            className={cn(
-              'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium text-xs sm:text-sm',
-              'bg-[var(--color-primary)] text-white',
-              'hover:bg-[var(--color-primary)]/90 active:scale-[0.98]',
-              'transition-all duration-150',
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            )}
+            leadingIcon={
+              isDetecting ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Zap className="w-3.5 h-3.5" />
+              )
+            }
           >
-            {isDetecting ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Zap className="w-3.5 h-3.5" />
-            )}
             <span className="hidden xs:inline">{isDetecting ? 'Detecting' : 'Detect'}</span>
-          </button>
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="p-1.5 sm:p-2 rounded-md text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors duration-150"
+          </Button>
+          <IconButton
+            ariaLabel={soundsOn ? 'Mute sounds' : 'Enable sounds'}
+            title={soundsOn ? 'Mute sounds' : 'Enable sounds'}
+            tone={soundsOn ? 'neutral' : 'brand'}
+            icon={soundsOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            onClick={toggleSounds}
+          />
+          <IconButton
+            ariaLabel="Settings"
             title="Settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+            tone="neutral"
+            icon={<Settings className="w-4 h-4" />}
+            onClick={() => setShowSettingsModal(true)}
+          />
         </div>
       </header>
 
@@ -275,16 +313,13 @@ export function AccountList() {
                 Linked
               </span>
             ) : (
-              <button
+              <Button
+                size="sm"
                 onClick={() => setShowLinkModal(true)}
-                className={cn(
-                  "px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs font-medium shrink-0",
-                  "bg-amber-500 hover:bg-amber-400 text-black",
-                  "transition-colors duration-150"
-                )}
+                className="bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 hover:shadow-amber-500/40 shrink-0"
               >
                 Link
-              </button>
+              </Button>
             )}
           </div>
 
@@ -443,16 +478,11 @@ export function AccountList() {
                 const isActive = activeAccountId === account.id
 
                 return (
-                  <div
+                  <Card
                     key={account.id}
-                    className={cn(
-                      'p-4 sm:p-5 rounded-xl relative overflow-hidden',
-                      'bg-[var(--color-card)] border-2',
-                      isActive
-                        ? 'border-green-500/50 shadow-lg shadow-green-500/10'
-                        : 'border-[var(--color-border)]/40 hover:border-[var(--color-border)]/60',
-                      'transition-all duration-200'
-                    )}
+                    interactive
+                    active={isActive}
+                    className="p-4 sm:p-5"
                   >
                     {/* Active indicator bar */}
                     {isActive && (
@@ -488,18 +518,17 @@ export function AccountList() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 ml-2">
-                        <button
+                        <IconButton
+                          ariaLabel="Edit account"
+                          icon={<Pencil className="w-4 h-4" />}
                           onClick={() => setEditingAccount(account)}
-                          className="p-2 rounded-lg text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors duration-150"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
+                        />
+                        <IconButton
+                          ariaLabel="Delete account"
+                          tone="destructive"
+                          icon={<Trash2 className="w-4 h-4" />}
                           onClick={() => setDeletingAccount(account)}
-                          className="p-2 rounded-lg text-[var(--color-muted-foreground)] hover:text-red-400 hover:bg-red-500/10 transition-colors duration-150"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        />
                       </div>
                     </div>
 
@@ -510,40 +539,40 @@ export function AccountList() {
                         <code className="flex-1 text-sm bg-[var(--color-muted)]/30 px-2.5 py-1.5 rounded-md truncate font-medium">
                           {account.username}
                         </code>
-                        <button
-                          onClick={() => copyToClipboard(account.username, `${account.id}-user`)}
-                          className={cn(
-                            'p-1.5 rounded-md transition-colors duration-150 shrink-0',
+                        <IconButton
+                          ariaLabel="Copy username"
+                          size="sm"
+                          tone={copiedId === `${account.id}-user` ? 'success' : 'neutral'}
+                          icon={
                             copiedId === `${account.id}-user`
-                              ? 'text-green-400 bg-green-500/10'
-                              : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30'
-                          )}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
+                              ? <CheckIcon className="w-3.5 h-3.5" />
+                              : <Copy className="w-3.5 h-3.5" />
+                          }
+                          onClick={() => copyToClipboard(account.username, `${account.id}-user`)}
+                        />
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-[var(--color-muted-foreground)] w-16 shrink-0">Password</span>
                         <code className="flex-1 text-sm bg-[var(--color-muted)]/30 px-2.5 py-1.5 rounded-md font-mono truncate">
                           {isPasswordVisible ? account.password : '••••••••'}
                         </code>
-                        <button
+                        <IconButton
+                          ariaLabel={isPasswordVisible ? 'Hide password' : 'Show password'}
+                          size="sm"
+                          icon={isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           onClick={() => togglePasswordVisibility(account.id)}
-                          className="p-1.5 rounded-md text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors duration-150 shrink-0"
-                        >
-                          {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(account.password, `${account.id}-pass`)}
-                          className={cn(
-                            'p-1.5 rounded-md transition-colors duration-150 shrink-0',
+                        />
+                        <IconButton
+                          ariaLabel="Copy password"
+                          size="sm"
+                          tone={copiedId === `${account.id}-pass` ? 'success' : 'neutral'}
+                          icon={
                             copiedId === `${account.id}-pass`
-                              ? 'text-green-400 bg-green-500/10'
-                              : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30'
-                          )}
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
+                              ? <CheckIcon className="w-3.5 h-3.5" />
+                              : <Copy className="w-3.5 h-3.5" />
+                          }
+                          onClick={() => copyToClipboard(account.password, `${account.id}-pass`)}
+                        />
                       </div>
                     </div>
 
@@ -602,7 +631,7 @@ export function AccountList() {
                         </div>
                       </div>
                     )}
-                  </div>
+                  </Card>
                 )
               })}
             </div>
@@ -613,19 +642,13 @@ export function AccountList() {
       {/* Add Button - Instagram-style floating action */}
       <div className="px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3 bg-[var(--color-background)]/80 backdrop-blur-lg border-t border-[var(--color-border)]/20 shrink-0">
         <div className="max-w-4xl mx-auto flex justify-center">
-          <button
+          <Button
+            size="md"
+            leadingIcon={<Plus className="w-4 h-4" />}
             onClick={() => setShowAddModal(true)}
-            className={cn(
-              'px-5 sm:px-6 py-2 rounded-lg font-medium text-sm',
-              'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90',
-              'text-white inline-flex items-center gap-1.5',
-              'hover:scale-[1.02] active:scale-[0.98]',
-              'transition-all duration-150 ease-out'
-            )}
           >
-            <Plus className="w-4 h-4" />
-            <span>Add Account</span>
-          </button>
+            Add Account
+          </Button>
         </div>
       </div>
 
@@ -822,18 +845,17 @@ function LinkAccountModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
-      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl">
-        <div className="p-3 sm:p-4 border-b border-[var(--color-border)]">
-          <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
-            Link Riot Account
-          </h2>
-          <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-1">
-            Connect <span className="font-semibold text-[var(--color-foreground)] break-all">{detectedAccount.RiotID}</span> to one of your saved accounts
-          </p>
-        </div>
+    <Modal onClose={onClose} size="md">
+      <ModalHeader>
+        <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+          Link Riot Account
+        </h2>
+        <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] mt-1">
+          Connect <span className="font-semibold text-[var(--color-foreground)] break-all">{detectedAccount.RiotID}</span> to one of your saved accounts
+        </p>
+      </ModalHeader>
 
-        <div className="p-3 sm:p-4 space-y-2 sm:space-y-3 max-h-[50vh] sm:max-h-80 overflow-y-auto">
+      <div className="p-3 sm:p-4 space-y-2 sm:space-y-3 max-h-[50vh] sm:max-h-80 overflow-y-auto">
           {availableAccounts.length === 0 ? (
             <p className="text-xs sm:text-sm text-[var(--color-muted-foreground)] text-center py-4">
               All accounts are already linked to a Riot ID
@@ -884,28 +906,15 @@ function LinkAccountModal({
           )}
         </div>
 
-        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] flex gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleLink}
-            disabled={!selectedId || linking}
-            className={cn(
-              'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
-              'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            )}
-          >
-            {linking ? 'Linking...' : 'Link Account'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <Button fullWidth variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button fullWidth onClick={handleLink} disabled={!selectedId || linking}>
+          {linking ? 'Linking...' : 'Link Account'}
+        </Button>
+      </ModalFooter>
+    </Modal>
   )
 }
 
@@ -971,15 +980,14 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
-      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] shrink-0">
-          <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
-            {account ? 'Edit Account' : 'Add Account'}
-          </h2>
-        </div>
+    <Modal onClose={onClose} size="md">
+      <ModalHeader>
+        <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+          {account ? 'Edit Account' : 'Add Account'}
+        </h2>
+      </ModalHeader>
 
-        <form id="account-modal-form" onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
+      <form id="account-modal-form" onSubmit={handleSubmit} className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
           <div className="space-y-1.5 sm:space-y-2">
             <label className="text-xs sm:text-sm font-medium text-[var(--color-foreground)]">
               Display Name
@@ -1251,34 +1259,25 @@ export function AccountModal({ account, onClose }: { account: models.Account | n
             />
           </div>
         </form>
-        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              form="account-modal-form"
-              disabled={
-                loading ||
-                !formData.username ||
-                !formData.password ||
-                (formData.networkId === 'custom' && !formData.customNetwork.trim())
-              }
-              className={cn(
-                'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors',
-                'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-                'disabled:opacity-50 disabled:cursor-not-allowed'
-              )}
-            >
-              {loading ? 'Saving...' : (account ? 'Save' : 'Add')}
-            </button>
-          </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <Button fullWidth variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          fullWidth
+          type="submit"
+          form="account-modal-form"
+          disabled={
+            loading ||
+            !formData.username ||
+            !formData.password ||
+            (formData.networkId === 'custom' && !formData.customNetwork.trim())
+          }
+        >
+          {loading ? 'Saving...' : (account ? 'Save' : 'Add')}
+        </Button>
+      </ModalFooter>
+    </Modal>
   )
 }
 
@@ -1306,47 +1305,32 @@ export function DeleteAccountModal({
   const label = account.displayName || account.username
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
-      <div className="w-full max-w-[95%] sm:max-w-sm bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-3 sm:p-4 border-b border-[var(--color-border)] shrink-0 flex items-center gap-2 sm:gap-3">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
-            <Trash2 className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-red-400" />
-          </div>
-          <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
-            Delete account?
-          </h2>
+    <Modal onClose={onCancel} size="sm">
+      <ModalHeader className="flex items-center gap-2 sm:gap-3">
+        <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+          <Trash2 className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-red-400" />
         </div>
+        <h2 className="text-base sm:text-lg font-bold text-[var(--color-foreground)]">
+          Delete account?
+        </h2>
+      </ModalHeader>
 
-        <div className="p-3 sm:p-4 text-sm text-[var(--color-muted-foreground)] space-y-2">
-          <p>
-            This will permanently delete{' '}
-            <span className="text-[var(--color-foreground)] font-medium">{label}</span>{' '}
-            from your vault. This cannot be undone.
-          </p>
-        </div>
+      <ModalBody className="text-sm text-[var(--color-muted-foreground)] space-y-2">
+        <p>
+          This will permanently delete{' '}
+          <span className="text-[var(--color-foreground)] font-medium">{label}</span>{' '}
+          from your vault. This cannot be undone.
+        </p>
+      </ModalBody>
 
-        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={loading}
-            className={cn(
-              'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors text-white',
-              'bg-red-500 hover:bg-red-500/90 disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            {loading ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <Button fullWidth variant="secondary" onClick={onCancel} disabled={loading}>
+          Cancel
+        </Button>
+        <Button fullWidth variant="destructive" onClick={handleConfirm} disabled={loading}>
+          {loading ? 'Deleting...' : 'Delete'}
+        </Button>
+      </ModalFooter>
+    </Modal>
   )
 }

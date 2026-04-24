@@ -14,6 +14,9 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { cn } from '../lib/utils'
+import { MOTION_BASE, MOTION_FOCUS } from '../lib/motion'
+import { Button } from './ui/Button'
+import { Modal, ModalBody, ModalFooter, ModalHeader } from './ui/Modal'
 import { models } from '../../wailsjs/go/models'
 
 // Progressive-disclosure add-account wizard.
@@ -169,50 +172,44 @@ export function AddAccountWizard({ onClose }: { onClose: () => void }) {
     )
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-50">
-      <div className="w-full max-w-[95%] sm:max-w-md bg-[var(--color-card)] rounded-xl sm:rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
-        <WizardHeader step={step} isCustom={data.networkId === CUSTOM_NETWORK_ID} />
+    <Modal onClose={onClose} size="md">
+      <WizardHeader step={step} isCustom={data.networkId === CUSTOM_NETWORK_ID} />
 
-        <div className="p-3 sm:p-4 overflow-y-auto flex-1 space-y-3 sm:space-y-4">
-          {step === 'identity' && <IdentityStep data={data} update={update} />}
-          {step === 'network' && (
-            <NetworkStep
-              data={data}
-              onSelectNetwork={selectNetwork}
-              onSelectCustom={selectCustom}
-              networks={gameNetworks}
-            />
-          )}
-          {step === 'details' && (
-            <DetailsStep data={data} update={update} networks={gameNetworks} />
-          )}
-        </div>
+      <ModalBody className="space-y-3 sm:space-y-4">
+        {step === 'identity' && <IdentityStep data={data} update={update} />}
+        {step === 'network' && (
+          <NetworkStep
+            data={data}
+            onSelectNetwork={selectNetwork}
+            onSelectCustom={selectCustom}
+            networks={gameNetworks}
+          />
+        )}
+        {step === 'details' && (
+          <DetailsStep data={data} update={update} networks={gameNetworks} />
+        )}
+      </ModalBody>
 
-        <div className="p-3 sm:p-4 border-t border-[var(--color-border)] shrink-0 flex gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={goBack}
-            disabled={submitting}
-            className="flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {stepIndex > 0 && <ChevronLeft className="w-4 h-4" />}
-            {stepIndex === 0 ? 'Cancel' : 'Back'}
-          </button>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={!canAdvance || submitting}
-            className={cn(
-              'flex-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl font-medium text-sm transition-colors text-white',
-              'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90',
-              'disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            {step === 'details' ? (submitting ? 'Adding...' : 'Add Account') : 'Next'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <Button
+          fullWidth
+          variant="secondary"
+          onClick={goBack}
+          disabled={submitting}
+          leadingIcon={stepIndex > 0 ? <ChevronLeft className="w-4 h-4" /> : undefined}
+        >
+          {stepIndex === 0 ? 'Cancel' : 'Back'}
+        </Button>
+        <Button
+          fullWidth
+          variant="primary"
+          onClick={goNext}
+          disabled={!canAdvance || submitting}
+        >
+          {step === 'details' ? (submitting ? 'Adding...' : 'Add Account') : 'Next'}
+        </Button>
+      </ModalFooter>
+    </Modal>
   )
 }
 
@@ -627,22 +624,26 @@ function Tile({
       type="button"
       onClick={onClick}
       className={cn(
-        'group relative flex flex-col items-center gap-2 p-3 sm:p-4 rounded-xl border-2 transition-all',
-        'hover:scale-[1.02] active:scale-[0.98]',
+        'group relative flex flex-col items-center gap-2 p-3 sm:p-4 rounded-xl border-2',
+        MOTION_BASE,
+        MOTION_FOCUS,
+        'hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100',
         selected
-          ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-          : 'border-[var(--color-border)] bg-[var(--color-muted)]/30 hover:border-[var(--color-muted-foreground)]/40',
+          ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 shadow-[0_0_0_3px_var(--color-primary)]/10 ring-1 ring-[var(--color-primary)]/30'
+          : 'border-[var(--color-border)] bg-[var(--color-muted)]/30 hover:border-[var(--color-muted-foreground)]/40 hover:bg-[var(--color-muted)]/50 hover:shadow-md',
       )}
       aria-pressed={selected}
     >
       {selected && (
-        <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
+        <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--color-primary)] flex items-center justify-center shadow-md shadow-[var(--color-primary)]/30 animate-pop-in">
           <Check className="w-3 h-3 text-white" />
         </span>
       )}
       <div
         className={cn(
           'w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center border',
+          MOTION_BASE,
+          'group-hover:scale-110 motion-reduce:group-hover:scale-100',
           visual.color,
         )}
       >

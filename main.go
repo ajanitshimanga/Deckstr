@@ -37,10 +37,11 @@ func main() {
 	// Start with login size (vertical), will resize after unlock
 	err := wails.Run(&options.App{
 		Title:     "SmurfManager",
-		Width:     380,
-		Height:    700,
-		MinWidth:  380,
-		MinHeight: 650,
+		// One size across login + main so unlocking doesn't resize the window.
+		Width:     520,
+		Height:    760,
+		MinWidth:  520,
+		MinHeight: 760,
 		MaxWidth:  700,
 		MaxHeight: 900,
 		AssetServer: &assetserver.Options{
@@ -48,6 +49,11 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 15, G: 15, B: 15, A: 1}, // Match --color-background
 		OnStartup:        app.startup,
+		// Frameless: native title bar is removed; the app paints its own
+		// title bar (see WindowFrame.tsx) so chrome blends with the UI.
+		// Windows 11 still renders a rounded outline + DWM drop shadow
+		// automatically for frameless windows.
+		Frameless: true,
 		Windows: &windows.Options{
 			DisableFramelessWindowDecorations: false,
 			WebviewIsTransparent:              false,

@@ -71,3 +71,46 @@ body {
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Motion vocabulary.
+ * Three shared keyframes used by modals, selection badges, and any other
+ * element that appears in response to a user action. Kept in CSS so we don't
+ * need the tailwindcss-animate plugin.
+ */
+
+@keyframes osm-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes osm-scale-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+
+@keyframes osm-pop-in {
+  0%   { opacity: 0; transform: scale(0.5); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.animate-fade-in {
+  animation: osm-fade-in 150ms ease-out both;
+}
+
+.animate-scale-in {
+  animation: osm-scale-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-pop-in {
+  animation: osm-pop-in 240ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-scale-in,
+  .animate-pop-in {
+    animation: none;
+  }
+}

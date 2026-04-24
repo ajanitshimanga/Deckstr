@@ -466,13 +466,14 @@ func (a *App) IsAnyClientRunning() bool {
 // Window Management (exposed to frontend)
 // ============================================
 
-// SetWindowSizeLogin sets the window to login/compact size (vertical)
+// SetWindowSizeLogin sets the window to login size. Same dimensions as the
+// main dashboard so unlocking doesn't trigger a jarring resize.
 func (a *App) SetWindowSizeLogin() {
-	runtime.WindowSetMinSize(a.ctx, 380, 650)
-	runtime.WindowSetSize(a.ctx, 380, 700)
+	runtime.WindowSetMinSize(a.ctx, 520, 760)
+	runtime.WindowSetSize(a.ctx, 520, 760)
 }
 
-// SetWindowSizeMain sets the window to main/dashboard size (horizontal)
+// SetWindowSizeMain sets the window to main/dashboard size.
 func (a *App) SetWindowSizeMain() {
 	runtime.WindowSetMinSize(a.ctx, 520, 760)
 	runtime.WindowSetSize(a.ctx, 520, 760)
