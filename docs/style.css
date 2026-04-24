@@ -109,10 +109,12 @@ h1 {
   max-width: 460px;
 }
 
-.sub {
+/* Demoted to a small muted line above the footer — it's worth saying
+   but shouldn't compete with the CTA in the hero. */
+.beta-note {
   color: var(--muted);
-  font-size: 1.0625rem;
-  margin: -8px 0 0;
+  font-size: 0.8125rem;
+  margin: 12px 0 0;
 }
 
 .beta {
@@ -180,10 +182,17 @@ h1 {
 
 /* --- Footer ----------------------------------------------------- */
 
+/* Pinned to the bottom of the viewport — we want these links visible
+   but never competing with the hero, so they sit outside <main>. */
 footer {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   color: var(--muted);
   font-size: 0.8125rem;
-  margin-top: 16px;
+  z-index: 1;
+  text-align: center;
 }
 
 footer a {
