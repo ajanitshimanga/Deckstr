@@ -689,6 +689,12 @@ func (s *StorageService) loadVaultFile() (*models.Vault, error) {
 //   >2 — forward-compat fence. Refusing is safer than a silent downgrade
 //        where an old binary writes v2-scheme fields over v3-format data.
 func (s *StorageService) migrateVault(vault *models.Vault) error {
+	// Reset the flag unconditionally at the top of every call. This prevents
+	// a stale true value from a prior failed unlock of a v1 vault from
+	// surviving into a subsequent unlock of a v2 vault (e.g. if the on-disk
+	// file is edited out-of-band between attempts). Without this, migrateVault
+	// only set the flag in the v1 branch and had no path to clear it.
+	s.needsRecoveryRotation = false
 	switch {
 	case vault.Version == vaultVersion:
 		return nil

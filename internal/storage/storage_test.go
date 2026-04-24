@@ -1123,6 +1123,40 @@ func TestUnlockRefusesForwardVersions(t *testing.T) {
 	}
 }
 
+// TestMigrateVaultResetsFlagForV2 pins that loading a v2 vault clears
+// any stale needsRecoveryRotation flag left over from a prior unlock.
+// Without this, a wrong-password attempt on a v1 vault could leave the
+// flag true, and if the on-disk vault were swapped to v2 before the
+// next attempt, rotation would incorrectly fire on the v2 vault.
+func TestMigrateVaultResetsFlagForV2(t *testing.T) {
+	service, tmpDir := newTestStorageService(t)
+	defer os.RemoveAll(tmpDir)
+
+	// Create a v2 vault on disk, then lock.
+	_, err := service.CreateVaultWithRecoveryPhrase("user", "pw", "")
+	if err != nil {
+		t.Fatalf("create v2 vault: %v", err)
+	}
+	_, _ = service.ConsumePendingRecoveryRotation()
+	service.Lock()
+
+	// Simulate a stale flag left over from a prior failed v1 unlock attempt
+	// (which, before this fix, migrateVault had no path to clear).
+	service.needsRecoveryRotation = true
+
+	// Load the v2 vault. migrateVault must clear the stale flag.
+	v, err := service.loadVaultFile()
+	if err != nil {
+		t.Fatalf("loadVaultFile: %v", err)
+	}
+	if v.Version != 2 {
+		t.Fatalf("expected on-disk v2, got v%d", v.Version)
+	}
+	if service.needsRecoveryRotation {
+		t.Error("migrateVault must clear the rotation flag when loading a v2 vault")
+	}
+}
+
 // TestResetWithPhraseOnV1Vault — the forgot-password path must work for
 // users who never unlocked after the v1.3.1 update. Reset with their v1
 // phrase, land on a v2 vault with a new phrase.

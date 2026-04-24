@@ -248,13 +248,17 @@ func (c *CryptoService) DeriveRecoveryKeys(phrase string, salt []byte) (verifyHa
 
 // VerifyRecoveryPhraseV2 checks a phrase against a stored v2 verification
 // hash using constant-time comparison. Returns (false, nil) on mismatch,
-// (true, nil) on match, and propagates derivation errors.
+// (true, nil) on match, and propagates derivation errors. Both derived
+// halves (verify hash and encrypt key) are zeroed before return — verify
+// only needs one but we don't want the unused encrypt key lingering on
+// the heap until GC for consistency with other call sites.
 func (c *CryptoService) VerifyRecoveryPhraseV2(phrase string, salt []byte, storedVerifyHash []byte) (bool, error) {
-	verifyHash, _, err := c.DeriveRecoveryKeys(phrase, salt)
+	verifyHash, encryptKey, err := c.DeriveRecoveryKeys(phrase, salt)
 	if err != nil {
 		return false, err
 	}
 	defer ClearBytes(verifyHash)
+	defer ClearBytes(encryptKey)
 	return subtle.ConstantTimeCompare(verifyHash, storedVerifyHash) == 1, nil
 }
 
