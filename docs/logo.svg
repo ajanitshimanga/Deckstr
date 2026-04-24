@@ -1,0 +1,52 @@
+<svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="400" rx="92" fill="#1a3a5c"/>
+
+  <path fill="#3d9be9" d="
+    M200 58
+    C155 58 118 82 104 120
+    C94 146 98 172 116 192
+    C130 208 150 218 174 226
+    L200 234
+    C220 240 234 250 240 264
+    C246 278 242 294 232 304
+    C220 316 204 322 186 320
+    C168 318 152 308 144 292
+    L116 304
+    C130 336 164 358 200 360
+    C246 360 282 334 292 294
+    C300 264 290 236 268 218
+    C254 206 234 198 210 190
+    L186 182
+    C168 176 156 166 152 152
+    C148 138 154 124 164 114
+    C176 104 192 100 208 102
+    C224 104 238 114 246 128
+    L274 114
+    C258 82 232 58 200 58
+    Z
+  "/>
+
+  <path fill="#6bbfff" opacity="0.5" d="
+    M200 58
+    C155 58 118 82 104 120
+    C94 146 98 172 116 192
+    C124 200 134 208 146 214
+    C138 200 136 184 142 168
+    C150 148 168 136 190 132
+    L210 130
+    C226 128 240 120 248 108
+    C244 86 224 62 200 58
+    Z
+  "/>
+
+  <g transform="translate(193,156) rotate(-22)">
+    <path fill="#f5c842" d="M-22,6 Q-18,18 0,20 Q18,18 22,6 Z"/>
+    <rect fill="#d4a020" x="-10" y="-1" width="20" height="10" rx="2.5"/>
+    <line stroke="#c87800" stroke-width="2" fill="none" x1="2" y1="-1" x2="2" y2="-34"/>
+    <path fill="white" opacity="0.95" d="M3,-3 L3,-32 L20,-10 Z"/>
+  </g>
+
+  <path fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2.5" stroke-linecap="round" d="M118,238 Q126,232 134,238"/>
+  <path fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2.5" stroke-linecap="round" d="M244,290 Q252,284 260,290"/>
+  <path fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2.5" stroke-linecap="round" d="M148,310 Q156,304 164,310"/>
+</svg>
