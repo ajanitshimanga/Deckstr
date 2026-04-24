@@ -48,7 +48,7 @@ jobs:
         run: |
           $content = Get-Content installer/setup.iss -Raw
           $content = $content -replace '#define MyAppVersion "1.0.0"', '#define MyAppVersion "${{ steps.version.outputs.VERSION }}"'
-          $content = $content -replace 'OutputBaseFilename=OpenSmurfManager-Setup-1.0.0', 'OutputBaseFilename=OpenSmurfManager-Setup-${{ steps.version.outputs.VERSION }}'
+          $content = $content -replace 'OutputBaseFilename=Deckstr-Setup-1.0.0', 'OutputBaseFilename=Deckstr-Setup-${{ steps.version.outputs.VERSION }}'
           Set-Content installer/setup.iss $content
 
       - name: Build installer
@@ -58,7 +58,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenSmurfManager-Windows
+          name: Deckstr-Windows
           path: build/installer/*.exe
 
   test:
@@ -93,7 +93,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: OpenSmurfManager v${{ steps.version.outputs.VERSION }}
+          name: Deckstr v${{ steps.version.outputs.VERSION }}
           draft: false
           prerelease: false
           generate_release_notes: true

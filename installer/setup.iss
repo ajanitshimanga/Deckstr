@@ -1,11 +1,11 @@
-; OpenSmurfManager Inno Setup Script
+; Deckstr Inno Setup Script
 ; Production-ready installer
 
-#define MyAppName "OpenSmurfManager"
+#define MyAppName "Deckstr"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "OpenSmurfManager"
+#define MyAppPublisher "Deckstr"
 #define MyAppURL "https://github.com/ajanitshimanga/OpenSmurfManager"
-#define MyAppExeName "OpenSmurfManager.exe"
+#define MyAppExeName "Deckstr.exe"
 
 [Setup]
 ; Basic app info
@@ -24,7 +24,7 @@ DisableProgramGroupPage=yes
 
 ; Output settings
 OutputDir=..\build\installer
-OutputBaseFilename=OpenSmurfManager-Setup-{#MyAppVersion}
+OutputBaseFilename=Deckstr-Setup-{#MyAppVersion}
 SetupIconFile=..\build\windows\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
@@ -112,6 +112,77 @@ begin
   end;
 end;
 
+// Migrate legacy %APPDATA%\OpenSmurfManager → %APPDATA%\Deckstr after install
+// but before the app is launched. Runs in three modes (mirrors the runtime
+// resolver in internal/appdir):
+//   1. Pure legacy: atomic rename. Fastest, journaled, survives crash.
+//   2. Split state (both exist): per-entry move where current doesn't already
+//      hold the file. Never overwrites — current always wins.
+//   3. Fresh install: nothing to do.
+// The runtime appdir.Path() is the safety net for any case the installer
+// missed (sideloaded binaries, weird AppData states).
+procedure MigrateLegacyAppData;
+var
+  LegacyDir, NewDir, SrcPath, DstPath: String;
+  FindRec: TFindRec;
+  Remaining: TFindRec;
+begin
+  LegacyDir := ExpandConstant('{userappdata}\OpenSmurfManager');
+  NewDir := ExpandConstant('{userappdata}\Deckstr');
+
+  if not DirExists(LegacyDir) then
+    Exit;
+
+  if not DirExists(NewDir) then
+  begin
+    // Mode 1: atomic rename. RenameFile handles dirs on Windows.
+    if RenameFile(LegacyDir, NewDir) then
+      Exit;
+    // Rename failed — ensure NewDir exists, then fall into per-entry merge.
+    if not ForceDirectories(NewDir) then
+      Exit;
+  end;
+
+  // Mode 2: per-entry merge. Don't overwrite anything that already exists
+  // in NewDir — silent overwrite of vault.osm would be the worst possible
+  // failure mode.
+  if FindFirst(LegacyDir + '\*', FindRec) then
+  try
+    repeat
+      if (FindRec.Name = '.') or (FindRec.Name = '..') then
+        Continue;
+      SrcPath := LegacyDir + '\' + FindRec.Name;
+      DstPath := NewDir + '\' + FindRec.Name;
+      if FileExists(DstPath) or DirExists(DstPath) then
+        Continue; // current wins, leave legacy copy in place
+      RenameFile(SrcPath, DstPath); // ignore errors per-entry
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+
+  // Drop LegacyDir if the merge fully drained it.
+  if FindFirst(LegacyDir + '\*', Remaining) then
+  begin
+    try
+      // Skip the . and .. entries to determine emptiness.
+      repeat
+        if (Remaining.Name <> '.') and (Remaining.Name <> '..') then
+          Exit; // not empty, leave alone
+      until not FindNext(Remaining);
+    finally
+      FindClose(Remaining);
+    end;
+    RemoveDir(LegacyDir);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    MigrateLegacyAppData;
+end;
+
 // Offer to delete user data on uninstall
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
@@ -119,7 +190,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    UserDataDir := ExpandConstant('{userappdata}\OpenSmurfManager');
+    UserDataDir := ExpandConstant('{userappdata}\Deckstr');
     if DirExists(UserDataDir) then
     begin
       if MsgBox('Do you want to delete your saved accounts and settings?' + #13#10 + #13#10 +

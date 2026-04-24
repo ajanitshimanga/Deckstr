@@ -338,7 +338,7 @@ export function UnlockScreen() {
             <KeyRound className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
-            OpenSmurfManager
+            Deckstr
           </h1>
           <p className="text-[var(--color-primary)] text-sm font-medium mt-1">
             Centralize Your Accounts

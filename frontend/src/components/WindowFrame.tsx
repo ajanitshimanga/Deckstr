@@ -33,7 +33,7 @@ export function WindowFrame() {
       <div className="flex items-center gap-2" style={{ ['--wails-draggable' as any]: 'no-drag' }}>
         <Gamepad2 className="w-3.5 h-3.5 text-[var(--color-primary)]" />
         <span className="text-xs font-semibold text-[var(--color-foreground)] tracking-tight">
-          SmurfManager
+          Deckstr
         </span>
       </div>
 

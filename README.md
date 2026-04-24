@@ -1,4 +1,4 @@
-# OpenSmurfManager
+# Deckstr
 
 <div align="center">
 
@@ -19,11 +19,11 @@
 
 ---
 
-## Why OpenSmurfManager?
+## Why Deckstr?
 
 Managing multiple gaming accounts is a pain. Spreadsheets leak, browser passwords sync to clouds you don't control, and sticky notes... well, you know.
 
-**OpenSmurfManager** keeps your credentials **encrypted locally** on your machine. No cloud. No sync. No data leaving your computer. Just military-grade encryption protecting your accounts.
+**Deckstr** keeps your credentials **encrypted locally** on your machine. No cloud. No sync. No data leaving your computer. Just military-grade encryption protecting your accounts.
 
 ### Built by a Competitive Player
 
@@ -83,7 +83,7 @@ This isn't about stomping lower-ranked lobbies—it's about being able to queue 
 ### Quick Start (Windows)
 
 1. Download the latest installer from [Releases](https://github.com/ajanitshimanga/OpenSmurfManager/releases)
-2. Run `OpenSmurfManager-Setup-x.x.x.exe`
+2. Run `Deckstr-Setup-x.x.x.exe`
 3. Create your account with a strong master password
 4. Start adding your gaming accounts!
 
@@ -222,7 +222,7 @@ go test ./internal/crypto -v
 ### Project Structure
 
 ```
-OpenSmurfManager/
+Deckstr/
 ├── frontend/           # React + TypeScript UI
 │   ├── src/
 │   │   ├── components/ # UI components
@@ -284,20 +284,20 @@ Account storage works with any game. Automatic rank tracking for Valorant is on 
 <details>
 <summary><strong>Is this against Riot's Terms of Service?</strong></summary>
 
-OpenSmurfManager is a local password manager. It does not automate gameplay, inject into the client, or provide any competitive advantage. It simply stores your credentials securely, like any password manager.
+Deckstr is a local password manager. It does not automate gameplay, inject into the client, or provide any competitive advantage. It simply stores your credentials securely, like any password manager.
 </details>
 
 <details>
 <summary><strong>Can I sync across computers?</strong></summary>
 
-Not yet. The vault file is at `%APPDATA%\OpenSmurfManager\vault.osm` — you could manually copy it, but we recommend against it for security reasons. Encrypted cloud sync is on the future roadmap.
+Not yet. The vault file is at `%APPDATA%\Deckstr\vault.osm` (legacy installs were at `%APPDATA%\OpenSmurfManager\` — auto-migrated on first launch after rebrand) — you could manually copy it, but we recommend against it for security reasons. Encrypted cloud sync is on the future roadmap.
 </details>
 
 ---
 
 ## Support the Project
 
-If OpenSmurfManager saves you time, consider supporting development:
+If Deckstr saves you time, consider supporting development:
 
 <p align="center">
   <a href="https://github.com/sponsors/ajanitshimanga">

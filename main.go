@@ -24,7 +24,7 @@ func main() {
 
 	// Telemetry is best-effort — if it can't initialise (unwritable config
 	// dir, etc.) we log to stderr and keep running.
-	if err := telemetry.Init("OpenSmurfManager", updater.Version); err != nil {
+	if err := telemetry.Init("Deckstr", updater.Version); err != nil {
 		println("telemetry init failed:", err.Error())
 	}
 	defer telemetry.Close()
@@ -36,7 +36,7 @@ func main() {
 	// Create application with options
 	// Start with login size (vertical), will resize after unlock
 	err := wails.Run(&options.App{
-		Title:     "SmurfManager",
+		Title:     "Deckstr",
 		// One size across login + main so unlocking doesn't resize the window.
 		Width:     520,
 		Height:    760,

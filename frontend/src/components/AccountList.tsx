@@ -257,7 +257,7 @@ export function AccountList() {
           </div>
           <div className="min-w-0">
             <h1 className="text-sm sm:text-base font-semibold text-[var(--color-foreground)] truncate">
-              SmurfManager
+              Deckstr
             </h1>
             <p className="text-[10px] sm:text-xs text-[var(--color-muted-foreground)] truncate">
               {username}
