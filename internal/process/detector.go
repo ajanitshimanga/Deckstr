@@ -68,6 +68,39 @@ func AnyRunning(processNames []string) bool {
 	return false
 }
 
+// GetExePath returns the full executable path of the first matching running process
+// Returns empty string if none are running or path cannot be retrieved
+// Cross-platform: automatically normalizes .exe suffix
+func GetExePath(processNames []string) string {
+	if len(processNames) == 0 {
+		return ""
+	}
+
+	procs, err := process.Processes()
+	if err != nil {
+		return ""
+	}
+
+	targets := make(map[string]bool, len(processNames))
+	for _, name := range processNames {
+		targets[normalizeProcessName(name)] = true
+	}
+
+	for _, p := range procs {
+		name, err := p.Name()
+		if err != nil {
+			continue
+		}
+		if targets[normalizeProcessName(name)] {
+			exe, err := p.Exe()
+			if err == nil && exe != "" {
+				return exe
+			}
+		}
+	}
+	return ""
+}
+
 // GetRunningProcess returns the name of the first matching process found
 // Returns empty string if none are running
 // Cross-platform: automatically normalizes .exe suffix

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"OpenSmurfManager/internal/process"
 )
 
 // LCUClient handles communication with the League Client Update API
@@ -71,25 +73,27 @@ func findLockfileByType(clientType string) (*LockfileData, error) {
 	homeDir, _ := os.UserHomeDir()
 	localAppData := filepath.Join(homeDir, "AppData", "Local")
 
+	// Dynamically discovered paths take priority - these handle custom install
+	// locations (different drive, custom folder) that hardcoded paths would miss.
 	var paths []string
+	paths = append(paths, discoverLeagueLockfilePaths()...)
 
 	if clientType == "league" {
-		// League-specific paths first
-		paths = []string{
+		paths = append(paths,
 			filepath.Join(localAppData, "Riot Games", "League of Legends", "lockfile"),
 			`C:\Riot Games\League of Legends\lockfile`,
 			`D:\Riot Games\League of Legends\lockfile`,
-		}
+		)
 	} else {
 		// Riot Client paths first
-		paths = []string{
+		paths = append(paths,
 			filepath.Join(localAppData, "Riot Games", "Riot Client", "Config", "lockfile"),
 			filepath.Join(localAppData, "Riot Games", "League of Legends", "lockfile"),
 			`C:\Riot Games\League of Legends\lockfile`,
 			`C:\Riot Games\Riot Client\Config\lockfile`,
 			`D:\Riot Games\League of Legends\lockfile`,
 			`D:\Riot Games\Riot Client\Config\lockfile`,
-		}
+		)
 	}
 
 	programFiles := os.Getenv("ProgramFiles")
@@ -102,7 +106,16 @@ func findLockfileByType(clientType string) (*LockfileData, error) {
 		paths = append(paths, filepath.Join(programFilesX86, "Riot Games", "League of Legends", "lockfile"))
 	}
 
+	seen := make(map[string]bool, len(paths))
 	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		key := strings.ToLower(filepath.Clean(p))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if _, err := os.Stat(p); err == nil {
 			return parseLockfile(p)
 		}
@@ -112,6 +125,57 @@ func findLockfileByType(clientType string) (*LockfileData, error) {
 		return nil, fmt.Errorf("League of Legends lockfile not found - is League running?")
 	}
 	return nil, fmt.Errorf("lockfile not found - is the Riot Client running?")
+}
+
+// discoverLeagueLockfilePaths returns League of Legends lockfile paths discovered
+// at runtime, regardless of install location. Two sources, in order of trust:
+//  1. Riot's canonical install manifest at ProgramData\Riot Games\RiotClientInstalls.json
+//  2. The directory of any running LeagueClient.exe process
+func discoverLeagueLockfilePaths() []string {
+	var paths []string
+
+	if manifestPath := riotClientInstallsManifestPath(); manifestPath != "" {
+		if dirs := readLeagueInstallDirsFromManifest(manifestPath); len(dirs) > 0 {
+			for _, dir := range dirs {
+				paths = append(paths, filepath.Join(dir, "lockfile"))
+			}
+		}
+	}
+
+	if exe := process.GetExePath([]string{"LeagueClient.exe", "LeagueClient"}); exe != "" {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), "lockfile"))
+	}
+
+	return paths
+}
+
+func riotClientInstallsManifestPath() string {
+	if programData := os.Getenv("ProgramData"); programData != "" {
+		return filepath.Join(programData, "Riot Games", "RiotClientInstalls.json")
+	}
+	return `C:\ProgramData\Riot Games\RiotClientInstalls.json`
+}
+
+func readLeagueInstallDirsFromManifest(manifestPath string) []string {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil
+	}
+
+	var manifest struct {
+		AssociatedClient map[string]string `json:"associated_client"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil
+	}
+
+	var dirs []string
+	for installDir := range manifest.AssociatedClient {
+		if strings.Contains(strings.ToLower(installDir), "league of legends") {
+			dirs = append(dirs, installDir)
+		}
+	}
+	return dirs
 }
 
 // NewLeagueLCUClient creates a client specifically for the League of Legends client
