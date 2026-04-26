@@ -56,7 +56,7 @@ func TestLogger_WritesOTelRecord(t *testing.T) {
 	if r.Attributes["latency_ms"].(float64) != 42 {
 		t.Errorf("latency_ms = %v, want 42", r.Attributes["latency_ms"])
 	}
-	for _, k := range []string{"service.name", "service.version", "os.type", "client.id", "session.id"} {
+	for _, k := range []string{"service.name", "service.version", "os.type", "client.id", "$session_id"} {
 		if _, ok := r.Resource[k]; !ok {
 			t.Errorf("resource missing %q", k)
 		}

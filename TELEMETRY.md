@@ -38,7 +38,7 @@ data is portable to any standard backend.
 | `service.name` | `"Deckstr"` | Distinguishes our events from other OTel sources |
 | `service.version` | `"1.2.5"` | Lets us correlate regressions with releases |
 | `os.type` | `"windows"` | Platform-level bucketing (Windows / macOS / Linux) |
-| `session.id` | UUID, new each launch | Groups events from a single app session |
+| `$session_id` | UUID, new each launch | Groups events from a single app session. Named with a `$` prefix so PostHog's session-grouping UI picks it up natively. |
 | `client.id` | **rotating daily** salted hash, *or omitted entirely* | Enables daily/monthly active-user counts without a durable tracking identifier. See "Client identifier" below. |
 
 ### Events

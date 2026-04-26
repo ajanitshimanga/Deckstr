@@ -93,7 +93,10 @@ func New(opts Options) (*Logger, error) {
 			"service.version": opts.Version,
 			"os.type":         runtime.GOOS,
 			"client.id":       opts.ClientID,
-			"session.id":      sessionID,
+			// PostHog-reserved property name. Unlocks session-grouping in
+			// the UI ("show me everything this user did in this session")
+			// and is treated as the canonical session field by their SDKs.
+			"$session_id": sessionID,
 		},
 		shipper:   newPosthogShipper(apiKey, endpoint, opts.ClientID, skip),
 		flushDone: make(chan struct{}),
