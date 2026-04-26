@@ -7,6 +7,7 @@ import (
 	"OpenSmurfManager/internal/telemetry"
 	"OpenSmurfManager/internal/updater"
 
+	"fyne.io/systray"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -36,6 +37,14 @@ func main() {
 	app := NewApp()
 	app.startTime = startTime
 
+	// Tray icon runs alongside the Wails window so closing the window
+	// hides it to the system tray (Discord-style) rather than quitting.
+	// The systray loop is blocking + locks its own OS thread, so it has
+	// to live on its own goroutine. Tear it down when wails.Run returns
+	// so the tray icon doesn't outlive the process.
+	go app.startTray()
+	defer systray.Quit()
+
 	// Create application with options
 	// Start with login size (vertical), will resize after unlock
 	err := wails.Run(&options.App{
@@ -52,6 +61,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 15, G: 15, B: 15, A: 1}, // Match --color-background
 		OnStartup:        app.startup,
+		OnBeforeClose:    app.beforeClose,
 		// Frameless: native title bar is removed; the app paints its own
 		// title bar (see WindowFrame.tsx) so chrome blends with the UI.
 		// Windows 11 still renders a rounded outline + DWM drop shadow

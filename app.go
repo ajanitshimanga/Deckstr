@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"OpenSmurfManager/internal/accounts"
@@ -32,6 +33,10 @@ type App struct {
 	// startTime is set by main() before Wails.Run so startup() can report
 	// cold-boot latency in the app.start telemetry event.
 	startTime time.Time
+
+	// quitting is flipped by the tray's Quit menu so that beforeClose
+	// allows the next close to actually exit instead of hiding to tray.
+	quitting atomic.Bool
 }
 
 // NewApp creates a new App application struct
