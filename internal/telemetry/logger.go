@@ -21,6 +21,15 @@ type Options struct {
 	Backups     int           // number of rotated files to retain
 	FlushEvery  time.Duration // buffered flush cadence
 	Now         func() time.Time // overridable clock for tests
+
+	// PostHogAPIKey overrides the link-time-injected key. Tests use this to
+	// inject a stub; production leaves it empty to fall back to the global.
+	PostHogAPIKey string
+	// PostHogEndpoint overrides the link-time-injected endpoint. Same role.
+	PostHogEndpoint string
+	// PostHogSkipEvents replaces the default skip set (which drops the
+	// polling event "account.detect"). Pass an empty map to ship everything.
+	PostHogSkipEvents map[string]bool
 }
 
 // Logger is the singleton event sink. All calls are safe for concurrent
@@ -31,6 +40,7 @@ type Logger struct {
 	writer   *rotatingWriter
 	resource map[string]interface{}
 	now      func() time.Time
+	shipper  *posthogShipper
 
 	flushDone chan struct{}
 	wg        sync.WaitGroup
@@ -61,6 +71,20 @@ func New(opts Options) (*Logger, error) {
 		return nil, err
 	}
 
+	apiKey := opts.PostHogAPIKey
+	if apiKey == "" {
+		apiKey = posthogAPIKey
+	}
+	endpoint := opts.PostHogEndpoint
+	if endpoint == "" {
+		endpoint = posthogEndpoint
+	}
+	skip := opts.PostHogSkipEvents
+	if skip == nil {
+		skip = defaultPosthogSkipEvents
+	}
+	sessionID := uuid.NewString()
+
 	l := &Logger{
 		writer: w,
 		now:    opts.Now,
@@ -69,8 +93,9 @@ func New(opts Options) (*Logger, error) {
 			"service.version": opts.Version,
 			"os.type":         runtime.GOOS,
 			"client.id":       opts.ClientID,
-			"session.id":      uuid.NewString(),
+			"session.id":      sessionID,
 		},
+		shipper:   newPosthogShipper(apiKey, endpoint, opts.ClientID, skip),
 		flushDone: make(chan struct{}),
 	}
 
@@ -85,8 +110,8 @@ func New(opts Options) (*Logger, error) {
 // vault data — the whitelist-by-caller invariant is load-bearing.
 func (l *Logger) Log(sev Severity, body string, attrs map[string]interface{}) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closed {
+		l.mu.Unlock()
 		return
 	}
 	rec := Record{
@@ -99,11 +124,29 @@ func (l *Logger) Log(sev Severity, body string, attrs map[string]interface{}) {
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
+		l.mu.Unlock()
 		return
 	}
 	// Single write per record so the rotator sees per-record sizes and can
 	// rotate between records rather than in the middle of one.
 	_, _ = l.writer.Write(append(b, '\n'))
+	shipper := l.shipper
+	l.mu.Unlock()
+
+	// Ship to PostHog outside the mutex - the SDK is async + buffered, so
+	// this returns immediately, but we still don't want to hold the file
+	// lock across SDK calls.
+	if shipper != nil {
+		props := make(map[string]interface{}, len(attrs)+len(l.resource)+1)
+		for k, v := range attrs {
+			props[k] = v
+		}
+		for k, v := range l.resource {
+			props[k] = v
+		}
+		props["severity"] = sev.Text()
+		shipper.capture(body, props)
+	}
 }
 
 func (l *Logger) flushLoop(interval time.Duration) {
@@ -147,6 +190,7 @@ func (l *Logger) Close() error {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.shipper.close()
 	if l.writer != nil {
 		return l.writer.Close()
 	}

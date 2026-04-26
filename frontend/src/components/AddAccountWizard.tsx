@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search,
   ChevronLeft,
@@ -19,6 +19,7 @@ import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { cn } from '../lib/utils'
 import { buildGamesCatalog, type CatalogGame } from '../lib/catalog'
+import { track } from '../lib/telemetry'
 import { MOTION_BASE, MOTION_FOCUS } from '../lib/motion'
 import { Button } from './ui/Button'
 import { Modal, ModalBody, ModalFooter } from './ui/Modal'
@@ -140,6 +141,26 @@ export function AddAccountWizard({
   const [data, setData] = useState<WizardData>(EMPTY)
   const [submitting, setSubmitting] = useState(false)
 
+  // Funnel instrumentation: fire one event per step entry so we can compute
+  // drop-off (start → identity → game → network? → details → submit). The
+  // refs let the unmount cleanup see the latest step + whether the user
+  // actually completed the flow (without re-running the cleanup on every
+  // step change).
+  const completedRef = useRef(false)
+  const stepRef = useRef<Step>(step)
+  stepRef.current = step
+  useEffect(() => {
+    track.wizardStart()
+    return () => {
+      if (!completedRef.current) {
+        track.wizardCancelled(stepRef.current)
+      }
+    }
+  }, [])
+  useEffect(() => {
+    track.wizardStep(step)
+  }, [step])
+
   const steps = useMemo(() => stepsFor(data, catalog), [data, catalog])
   const stepIndex = Math.max(0, steps.indexOf(step))
   const isCustom = data.gameId === CUSTOM_GAME_ID
@@ -174,6 +195,7 @@ export function AddAccountWizard({
 
   const submit = async () => {
     setSubmitting(true)
+    track.wizardSubmit(data.gameId, data.selectedNetwork || (isCustom ? CUSTOM_NETWORK_ID : ''))
     try {
       if (isCustom) {
         await addAccount({
@@ -216,6 +238,7 @@ export function AddAccountWizard({
           cachedRanks: [],
         })
       }
+      completedRef.current = true
       onClose()
     } finally {
       setSubmitting(false)
@@ -235,7 +258,8 @@ export function AddAccountWizard({
   // on that network is auto-tagged: a Riot login always covers LoL + TFT +
   // Valorant, so it would be wrong to ask the user to opt in. The DetailsStep
   // surfaces this as an informational note rather than interactive tiles.
-  const selectGame = (game: CatalogGame) =>
+  const selectGame = (game: CatalogGame) => {
+    track.wizardGameSelect(game.id)
     setData((prev) =>
       prev.gameId === game.id
         ? prev
@@ -252,8 +276,10 @@ export function AddAccountWizard({
             customGame: '',
           },
     )
+  }
 
-  const selectCustomGame = () =>
+  const selectCustomGame = () => {
+    track.wizardGameSelect(CUSTOM_GAME_ID)
     setData((prev) =>
       prev.gameId === CUSTOM_GAME_ID
         ? prev
@@ -264,9 +290,12 @@ export function AddAccountWizard({
             alsoPlaysGames: [],
           },
     )
+  }
 
-  const pickNetwork = (networkId: string) =>
+  const pickNetwork = (networkId: string) => {
+    track.wizardNetworkSelect(networkId)
     setData((prev) => ({ ...prev, selectedNetwork: networkId }))
+  }
 
   return (
     <Modal

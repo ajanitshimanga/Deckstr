@@ -38,7 +38,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Build application
-        run: wails build -ldflags "-X 'OpenSmurfManager/internal/updater.Version=${{ steps.version.outputs.VERSION }}' -X 'OpenSmurfManager/internal/updater.GitHubOwner=${{ github.repository_owner }}' -X 'OpenSmurfManager/internal/updater.GitHubRepo=${{ github.event.repository.name }}'"
+        run: wails build -ldflags "-X 'OpenSmurfManager/internal/updater.Version=${{ steps.version.outputs.VERSION }}' -X 'OpenSmurfManager/internal/updater.GitHubOwner=${{ github.repository_owner }}' -X 'OpenSmurfManager/internal/updater.GitHubRepo=${{ github.event.repository.name }}' -X 'OpenSmurfManager/internal/telemetry.posthogAPIKey=${{ secrets.POSTHOG_API_KEY }}'"
 
       - name: Install Inno Setup
         run: choco install innosetup -y

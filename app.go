@@ -89,19 +89,36 @@ func (a *App) IsUnlocked() bool {
 
 // CreateVault creates a new vault with username and master password
 func (a *App) CreateVault(username, masterPassword string) error {
-	return a.storage.CreateVault(username, masterPassword)
+	err := a.storage.CreateVault(username, masterPassword)
+	telemetry.LogInfo("vault.create", map[string]interface{}{
+		"success":  err == nil,
+		"variant":  "basic",
+	})
+	return err
 }
 
 // CreateVaultWithHint creates a new vault with username, master password, and optional hint
 // DEPRECATED: Use CreateVaultWithRecoveryPhrase instead
 func (a *App) CreateVaultWithHint(username, masterPassword, hint string) error {
-	return a.storage.CreateVaultWithHint(username, masterPassword, hint)
+	err := a.storage.CreateVaultWithHint(username, masterPassword, hint)
+	telemetry.LogInfo("vault.create", map[string]interface{}{
+		"success":  err == nil,
+		"variant":  "with_hint",
+		"has_hint": hint != "",
+	})
+	return err
 }
 
 // CreateVaultWithRecoveryPhrase creates a new vault and returns the recovery phrase
 // The recovery phrase should be shown to the user (hidden by default) for safekeeping
 func (a *App) CreateVaultWithRecoveryPhrase(username, masterPassword, hint string) (string, error) {
-	return a.storage.CreateVaultWithRecoveryPhrase(username, masterPassword, hint)
+	phrase, err := a.storage.CreateVaultWithRecoveryPhrase(username, masterPassword, hint)
+	telemetry.LogInfo("vault.create", map[string]interface{}{
+		"success":  err == nil,
+		"variant":  "with_recovery",
+		"has_hint": hint != "",
+	})
+	return phrase, err
 }
 
 // Unlock decrypts the vault with username and master password

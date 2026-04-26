@@ -19,16 +19,30 @@ function emit(level: Level, event: string, attrs: Record<string, string> = {}): 
   }
 }
 
+type WizardStep = 'identity' | 'game' | 'network' | 'details'
+
 export const track = {
   // UI events (the backend already records vault.unlock / account.add /
   // etc. on its own — these are strictly *UI-originated* signals that the
   // Go side can't observe, e.g. which step of the wizard the user stops
   // at, or which filter chip they click).
-  wizardStep: (step: 'identity' | 'network' | 'details') =>
+  wizardStart: () =>
+    emit('info', 'ui.wizard_start', {}),
+
+  wizardStep: (step: WizardStep) =>
     emit('info', 'ui.wizard_step', { step }),
 
-  wizardCancelled: (step: 'identity' | 'network' | 'details') =>
+  wizardGameSelect: (gameId: string) =>
+    emit('info', 'ui.wizard_game_select', { game_id: gameId }),
+
+  wizardNetworkSelect: (networkId: string) =>
+    emit('info', 'ui.wizard_network_select', { network_id: networkId }),
+
+  wizardCancelled: (step: WizardStep) =>
     emit('info', 'ui.wizard_cancel', { step }),
+
+  wizardSubmit: (gameId: string, networkId: string) =>
+    emit('info', 'ui.wizard_submit', { game_id: gameId, network_id: networkId }),
 
   networkFilterChange: (networkId: string) =>
     emit('info', 'ui.filter_network', { network_id: networkId }),
