@@ -1,10 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAppStore } from '../stores/appStore'
 import {
   X,
-  User,
   Shield,
-  Trophy,
   Download,
   Lock,
   HelpCircle,
@@ -12,14 +10,19 @@ import {
   Eye,
   EyeOff,
   ChevronRight,
+  ChevronLeft,
   Zap,
   Clock,
   LogOut,
   ShieldCheck,
   FolderOpen,
   ExternalLink,
+  Activity,
+  Check,
+  Info,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { IconButton } from './ui/IconButton'
 import {
   IsTelemetryEnabled,
   SetTelemetryEnabled,
@@ -27,181 +30,573 @@ import {
   OpenReleasePage,
 } from '../../wailsjs/go/main/App'
 
-type SettingsTab = 'general' | 'security' | 'privacy' | 'ranked' | 'updates'
+// SettingsModal renders as a full-bleed page that fills the entire app body
+// below the custom WindowFrame (h-9 / 36px). It always tracks the current
+// app window size — there's no centered modal box to overflow or be cut off
+// at min window dimensions (520×760). The single-column grouped-list layout
+// mirrors iOS / Discord-style settings: scannable section headers, inline
+// toggles, and drill-in rows for sub-flows that need their own form.
+
+type View =
+  | 'main'
+  | 'password'
+  | 'hint'
+  | 'pin'
+  | 'updateSpeed'
+  | 'syncInterval'
+  | 'privacyDetails'
 
 interface SettingsModalProps {
   onClose: () => void
 }
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
-  const { lock } = useAppStore()
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+const POLLING_PROFILES = [
+  { id: 'instant', name: 'Instant', desc: 'Real-time updates · 1s', detail: 'Highest responsiveness, more CPU' },
+  { id: 'balanced', name: 'Balanced', desc: 'Good responsiveness · 5s', detail: 'Recommended for most setups' },
+  { id: 'eco', name: 'Eco', desc: 'Battery saver · 15s', detail: 'Lowest impact, slower updates' },
+] as const
 
-  // Esc to dismiss + body scroll lock, matching the Modal primitive's behaviour
+const SYNC_INTERVAL_PRESETS = [2, 5, 10, 15, 30] as const
+
+export function SettingsModal({ onClose }: SettingsModalProps) {
+  const [view, setView] = useState<View>('main')
+
+  // Esc dismisses one level: drill-in → main → close. Body scroll is locked
+  // while settings is open so the page underneath doesn't compete for focus.
   useEffect(() => {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (view !== 'main') setView('main')
+      else onClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => {
       document.body.style.overflow = prev
       window.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [view, onClose])
 
-  const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'general', label: 'General', icon: <User className="w-4 h-4" /> },
-    { id: 'security', label: 'Security', icon: <Shield className="w-4 h-4" /> },
-    { id: 'privacy', label: 'Data & Privacy', icon: <ShieldCheck className="w-4 h-4" /> },
-    { id: 'ranked', label: 'Ranked', icon: <Trophy className="w-4 h-4" /> },
-    { id: 'updates', label: 'Updates', icon: <Download className="w-4 h-4" /> },
-  ]
+  const headerTitle: Record<View, string> = {
+    main: 'Settings',
+    password: 'Change password',
+    hint: 'Password hint',
+    pin: 'Recovery PIN',
+    updateSpeed: 'Update speed',
+    syncInterval: 'Sync interval',
+    privacyDetails: 'Data & privacy',
+  }
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in"
-      onClick={onClose}
+      className={cn(
+        // Fill the app body below the 36px WindowFrame so the title bar
+        // stays draggable and the window controls keep working from inside
+        // settings.
+        'fixed top-9 left-0 right-0 bottom-0 z-40',
+        'bg-[var(--color-background)] flex flex-col animate-fade-in',
+      )}
+      role="dialog"
+      aria-label="Settings"
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl h-[500px] bg-[var(--color-card)] rounded-xl border border-[var(--color-border)] overflow-hidden shadow-2xl shadow-black/40 flex animate-scale-in relative before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-white/[0.06] before:pointer-events-none"
-      >
-        {/* Sidebar */}
-        <div className="w-48 bg-[var(--color-background)] border-r border-[var(--color-border)] flex flex-col">
-          <div className="p-4 border-b border-[var(--color-border)]">
-            <h2 className="text-lg font-bold text-[var(--color-foreground)]">Settings</h2>
-          </div>
-          <nav className="flex-1 p-2 space-y-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 motion-reduce:transition-none active:scale-[0.98] motion-reduce:active:scale-100',
-                  activeTab === tab.id
-                    ? 'bg-[var(--color-primary)] text-white shadow-sm shadow-[var(--color-primary)]/25'
-                    : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/50'
-                )}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-          {/* Sign Out button at bottom of sidebar */}
-          <div className="p-2 border-t border-[var(--color-border)]">
-            <button
-              onClick={() => {
-                lock()
-                onClose()
-              }}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </button>
-          </div>
+      {/* Header — paddings + IconButton mirror AccountList's header so the
+          close X lands exactly where the settings gear was. Toggling
+          settings on/off doesn't shift the right-edge button by even a pixel. */}
+      <header className="shrink-0 flex items-center justify-between gap-2 px-4 sm:px-5 lg:px-6 py-2.5 sm:py-3 border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {view !== 'main' && (
+            <IconButton
+              ariaLabel="Back"
+              tone="neutral"
+              icon={<ChevronLeft className="w-4 h-4" />}
+              onClick={() => setView('main')}
+            />
+          )}
+          <h2 className="text-sm sm:text-base font-semibold text-[var(--color-foreground)] truncate">
+            {headerTitle[view]}
+          </h2>
         </div>
+        <IconButton
+          ariaLabel="Close settings"
+          tone="neutral"
+          icon={<X className="w-4 h-4" />}
+          onClick={onClose}
+        />
+      </header>
 
-        {/* Content */}
-        <div className="flex-1 flex flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <h3 className="text-base font-semibold text-[var(--color-foreground)]">
-              {tabs.find(t => t.id === activeTab)?.label}
-            </h3>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]/30 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === 'general' && <GeneralTab />}
-            {activeTab === 'security' && <SecurityTab onClose={onClose} />}
-            {activeTab === 'privacy' && <PrivacyTab />}
-            {activeTab === 'ranked' && <RankedTab />}
-            {activeTab === 'updates' && <UpdatesTab />}
-          </div>
-        </div>
+      {/* Body */}
+      <div key={view} className="flex-1 min-h-0 overflow-y-auto">
+        {view === 'main' && <MainView setView={setView} onClose={onClose} />}
+        {view === 'password' && <PasswordChangeView onBack={() => setView('main')} onClose={onClose} />}
+        {view === 'hint' && <HintUpdateView onBack={() => setView('main')} />}
+        {view === 'pin' && <PinRegenView onBack={() => setView('main')} />}
+        {view === 'updateSpeed' && <UpdateSpeedView />}
+        {view === 'syncInterval' && <SyncIntervalView />}
+        {view === 'privacyDetails' && <PrivacyDetailsView />}
       </div>
     </div>
   )
 }
 
-// General Tab
-function GeneralTab() {
-  const { username, settings, updateSettings } = useAppStore()
-  const currentProfile = settings?.pollingProfile || 'balanced'
+// ---------------------------------------------------------------------------
+// Main grouped-list view
+// ---------------------------------------------------------------------------
 
-  const profiles = [
-    { id: 'instant', name: 'Instant', desc: 'Real-time updates (1s), more resources' },
-    { id: 'balanced', name: 'Balanced', desc: 'Good responsiveness (5s), minimal impact' },
-    { id: 'eco', name: 'Eco', desc: 'Minimal resources (15s), slower updates' },
-  ]
+function MainView({ setView, onClose }: { setView: (v: View) => void; onClose: () => void }) {
+  const {
+    username,
+    settings,
+    hasRecoveryPhrase,
+    passwordHint,
+    detectAndUpdateRanks,
+    isDetecting,
+    lastRankSyncTime,
+    appVersion,
+    isCheckingForUpdates,
+    checkForUpdates,
+    updateSettings,
+    lock,
+  } = useAppStore()
 
-  const handleProfileChange = async (profileId: string) => {
-    if (settings) {
-      await updateSettings({ ...settings, pollingProfile: profileId })
-      // Trigger immediate re-poll with new interval
-      useAppStore.getState().pollForActiveAccount()
+  const pollingProfileId = settings?.pollingProfile || 'balanced'
+  const pollingProfile = POLLING_PROFILES.find(p => p.id === pollingProfileId) || POLLING_PROFILES[1]
+
+  const autoRankSync = settings?.autoRankSync !== false
+  const syncIntervalMin = Math.round((settings?.rankSyncIntervalMs || 600000) / 60000)
+  const autoCheckUpdates = settings?.autoCheckUpdates !== false
+
+  const initials = (username || '?').slice(0, 2).toUpperCase()
+
+  return (
+    <div className="px-3 sm:px-4 py-4 space-y-5 pb-8">
+      {/* Profile card */}
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)]">
+        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[var(--color-primary)]/30 to-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 flex items-center justify-center text-sm font-semibold text-[var(--color-foreground)]">
+          {initials}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-[var(--color-foreground)] truncate">{username || 'Vault'}</p>
+          <p className="text-xs text-[var(--color-muted-foreground)]">Local vault · encrypted on this device</p>
+        </div>
+      </div>
+
+      {/* General */}
+      <Section label="General">
+        <DrillRow
+          icon={<Zap className="w-4 h-4" />}
+          title="Update speed"
+          subtitle={pollingProfile.desc}
+          value={pollingProfile.name}
+          onClick={() => setView('updateSpeed')}
+        />
+      </Section>
+
+      {/* Live tracking */}
+      <Section label="Live tracking" hint="Detect your active League account and refresh ranks">
+        <ToggleRow
+          icon={<Activity className="w-4 h-4" />}
+          title="Auto-sync ranks"
+          subtitle="Refresh ranks for the detected account"
+          value={autoRankSync}
+          onToggle={() => settings && updateSettings({ ...settings, autoRankSync: !autoRankSync })}
+        />
+        <DrillRow
+          icon={<Clock className="w-4 h-4" />}
+          title="Sync interval"
+          subtitle="Minimum time between rank checks"
+          value={`${syncIntervalMin} min`}
+          onClick={() => setView('syncInterval')}
+          disabled={!autoRankSync}
+        />
+        <ActionRow
+          icon={isDetecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          title={isDetecting ? 'Detecting…' : 'Detect ranks now'}
+          subtitle={`Last synced ${formatLastSync(lastRankSyncTime)}`}
+          onClick={() => detectAndUpdateRanks()}
+          disabled={isDetecting}
+          tone="brand"
+        />
+      </Section>
+
+      {/* Security */}
+      <Section label="Security">
+        <DrillRow
+          icon={<Lock className="w-4 h-4" />}
+          title="Change password"
+          subtitle="Update your master password"
+          onClick={() => setView('password')}
+        />
+        <DrillRow
+          icon={<HelpCircle className="w-4 h-4" />}
+          title="Password hint"
+          subtitle={passwordHint ? 'Shown on the lock screen' : 'Add a hint shown on the lock screen'}
+          value={passwordHint ? 'Set' : undefined}
+          onClick={() => setView('hint')}
+        />
+        <DrillRow
+          icon={<Shield className="w-4 h-4" />}
+          title={hasRecoveryPhrase ? 'Regenerate recovery PIN' : 'Generate recovery PIN'}
+          subtitle={hasRecoveryPhrase ? 'Replace your current recovery PIN' : 'Set up password recovery'}
+          value={hasRecoveryPhrase ? 'Active' : undefined}
+          onClick={() => setView('pin')}
+        />
+      </Section>
+
+      {/* Updates */}
+      <Section label="App updates">
+        <ToggleRow
+          icon={<Download className="w-4 h-4" />}
+          title="Auto-check on launch"
+          subtitle="Check for updates when Deckstr starts"
+          value={autoCheckUpdates}
+          onToggle={() => settings && updateSettings({ ...settings, autoCheckUpdates: !autoCheckUpdates })}
+        />
+        <ActionRow
+          icon={isCheckingForUpdates ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          title={isCheckingForUpdates ? 'Checking…' : 'Check for updates'}
+          subtitle={`Version ${appVersion || 'dev'}`}
+          onClick={() => checkForUpdates()}
+          disabled={isCheckingForUpdates}
+          tone="neutral"
+        />
+      </Section>
+
+      {/* Privacy */}
+      <PrivacyGroup onLearnMore={() => setView('privacyDetails')} />
+
+      {/* Sign out */}
+      <button
+        onClick={() => {
+          lock()
+          onClose()
+        }}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium text-red-400 bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 transition-colors"
+      >
+        <LogOut className="w-4 h-4" />
+        Sign out
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Privacy group (toggle is hot-loaded async; "Learn more" drills into the
+// disclosure page rather than crowding the main list).
+// ---------------------------------------------------------------------------
+
+function PrivacyGroup({ onLearnMore }: { onLearnMore: () => void }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    IsTelemetryEnabled().then(setEnabled).catch(() => setEnabled(false))
+  }, [])
+
+  const handleToggle = async () => {
+    if (enabled === null || saving) return
+    const next = !enabled
+    setSaving(true)
+    try {
+      await SetTelemetryEnabled(next)
+      setEnabled(next)
+    } catch (e) {
+      console.error('telemetry toggle failed', e)
+    } finally {
+      setSaving(false)
     }
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <label className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
-          Account
-        </label>
-        <div className="mt-2 flex items-center gap-3 p-3 rounded-lg bg-[var(--color-muted)]/30">
-          <div className="w-10 h-10 rounded-full bg-[var(--color-primary)]/20 flex items-center justify-center">
-            <User className="w-5 h-5 text-[var(--color-primary)]" />
-          </div>
-          <div>
-            <p className="font-medium text-[var(--color-foreground)]">{username}</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">Local vault owner</p>
-          </div>
+    <Section label="Privacy">
+      <ToggleRow
+        icon={<ShieldCheck className="w-4 h-4" />}
+        title="Anonymous usage data"
+        subtitle="Help improve Deckstr — vault contents are never sent"
+        value={!!enabled}
+        onToggle={handleToggle}
+        disabled={enabled === null || saving}
+      />
+      <DrillRow
+        icon={<Info className="w-4 h-4" />}
+        title="What's collected"
+        subtitle="See exactly what gets logged and what never does"
+        onClick={onLearnMore}
+      />
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section + Row primitives
+// ---------------------------------------------------------------------------
+
+function Section({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <section className="space-y-1.5">
+      <div className="px-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+          {label}
+        </p>
+        {hint && (
+          <p className="text-[11px] text-[var(--color-muted-foreground)]/80 mt-0.5">{hint}</p>
+        )}
+      </div>
+      <div className="rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] divide-y divide-[var(--color-border)]/60 overflow-hidden">
+        {children}
+      </div>
+    </section>
+  )
+}
+
+function RowFrame({
+  icon,
+  title,
+  subtitle,
+  trailing,
+  onClick,
+  disabled,
+  tone = 'neutral',
+}: {
+  icon: ReactNode
+  title: string
+  subtitle?: string
+  trailing?: ReactNode
+  onClick?: () => void
+  disabled?: boolean
+  tone?: 'neutral' | 'brand'
+}) {
+  const baseClass = cn(
+    'w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors',
+    onClick && !disabled && 'hover:bg-[var(--color-muted)]/30 active:bg-[var(--color-muted)]/40',
+    disabled && 'opacity-50 cursor-not-allowed',
+  )
+  const inner = (
+    <>
+      <div
+        className={cn(
+          'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0',
+          tone === 'brand'
+            ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
+            : 'bg-[var(--color-muted)]/60 text-[var(--color-muted-foreground)]',
+        )}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-[var(--color-foreground)] truncate">{title}</p>
+        {subtitle && (
+          <p className="text-xs text-[var(--color-muted-foreground)] truncate">{subtitle}</p>
+        )}
+      </div>
+      {trailing && <div className="flex-shrink-0">{trailing}</div>}
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} disabled={disabled} className={baseClass}>
+        {inner}
+      </button>
+    )
+  }
+  return <div className={baseClass}>{inner}</div>
+}
+
+function DrillRow(props: {
+  icon: ReactNode
+  title: string
+  subtitle?: string
+  value?: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <RowFrame
+      {...props}
+      trailing={
+        <div className="flex items-center gap-1.5 text-[var(--color-muted-foreground)]">
+          {props.value && <span className="text-xs font-medium">{props.value}</span>}
+          <ChevronRight className="w-4 h-4" />
+        </div>
+      }
+    />
+  )
+}
+
+function ToggleRow({
+  icon,
+  title,
+  subtitle,
+  value,
+  onToggle,
+  disabled,
+}: {
+  icon: ReactNode
+  title: string
+  subtitle?: string
+  value: boolean
+  onToggle: () => void
+  disabled?: boolean
+}) {
+  return (
+    <RowFrame
+      icon={icon}
+      title={title}
+      subtitle={subtitle}
+      onClick={disabled ? undefined : onToggle}
+      disabled={disabled}
+      trailing={
+        <div
+          aria-hidden
+          className={cn(
+            'w-10 h-6 rounded-full relative transition-colors',
+            value ? 'bg-green-500' : 'bg-zinc-600',
+            disabled && 'opacity-60',
+          )}
+        >
+          <div
+            className={cn(
+              'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
+              value ? 'translate-x-5' : 'translate-x-1',
+            )}
+          />
+        </div>
+      }
+    />
+  )
+}
+
+function ActionRow({
+  icon,
+  title,
+  subtitle,
+  onClick,
+  disabled,
+  tone = 'brand',
+}: {
+  icon: ReactNode
+  title: string
+  subtitle?: string
+  onClick: () => void
+  disabled?: boolean
+  tone?: 'neutral' | 'brand'
+}) {
+  return <RowFrame icon={icon} title={title} subtitle={subtitle} onClick={onClick} disabled={disabled} tone={tone} />
+}
+
+// ---------------------------------------------------------------------------
+// Drill-in: Update speed picker
+// ---------------------------------------------------------------------------
+
+function UpdateSpeedView() {
+  const { settings, updateSettings, pollForActiveAccount } = useAppStore()
+  const current = settings?.pollingProfile || 'balanced'
+
+  const choose = async (id: string) => {
+    if (!settings || id === current) return
+    await updateSettings({ ...settings, pollingProfile: id })
+    pollForActiveAccount()
+  }
+
+  return (
+    <div className="px-3 sm:px-4 py-4 space-y-3">
+      <p className="text-xs text-[var(--color-muted-foreground)] px-1 leading-relaxed">
+        How often Deckstr checks the League client to detect which account is signed in.
+        Faster polling reacts to account swaps quickly but uses slightly more CPU.
+      </p>
+      <div className="space-y-2">
+        {POLLING_PROFILES.map(p => {
+          const selected = current === p.id
+          return (
+            <button
+              key={p.id}
+              onClick={() => choose(p.id)}
+              className={cn(
+                'w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all',
+                selected
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
+                  : 'border-[var(--color-border)] bg-[var(--color-card)] hover:border-[var(--color-border)]/80',
+              )}
+            >
+              <div
+                className={cn(
+                  'w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                  selected ? 'border-[var(--color-primary)] bg-[var(--color-primary)]' : 'border-[var(--color-muted-foreground)]',
+                )}
+              >
+                {selected && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <div className="min-w-0">
+                <p className="font-medium text-[var(--color-foreground)]">{p.name}</p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">{p.desc}</p>
+                <p className="text-[11px] text-[var(--color-muted-foreground)]/80 mt-1">{p.detail}</p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Drill-in: Sync interval picker
+// ---------------------------------------------------------------------------
+
+function SyncIntervalView() {
+  const { settings, updateSettings } = useAppStore()
+  const minutes = Math.round((settings?.rankSyncIntervalMs || 600000) / 60000)
+
+  const setMinutes = (m: number) => {
+    if (!settings) return
+    updateSettings({ ...settings, rankSyncIntervalMs: m * 60000 })
+  }
+
+  return (
+    <div className="px-3 sm:px-4 py-4 space-y-5">
+      <p className="text-xs text-[var(--color-muted-foreground)] px-1 leading-relaxed">
+        Minimum time between automatic rank refreshes for your active account.
+        Shorter intervals show fresher data but make more requests to Riot.
+      </p>
+
+      <div className="rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] p-4 space-y-4">
+        <div className="text-center">
+          <p className="text-3xl font-bold text-[var(--color-foreground)] tabular-nums">{minutes}</p>
+          <p className="text-xs text-[var(--color-muted-foreground)] uppercase tracking-wider">minutes</p>
+        </div>
+        <input
+          type="range"
+          min={2}
+          max={30}
+          step={1}
+          value={minutes}
+          onChange={e => setMinutes(parseInt(e.target.value))}
+          className="w-full accent-[var(--color-primary)]"
+        />
+        <div className="flex justify-between text-[11px] text-[var(--color-muted-foreground)]">
+          <span>2 min</span>
+          <span>30 min</span>
         </div>
       </div>
 
-      {/* Polling Profile */}
-      <div className="pt-4 border-t border-[var(--color-border)]">
-        <label className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
-          Update Speed
-        </label>
-        <p className="text-xs text-[var(--color-muted-foreground)] mt-1 mb-3">
-          Balance between UI responsiveness and system resources
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)] px-1">
+          Quick presets
         </p>
-        <div className="space-y-2">
-          {profiles.map((profile) => (
+        <div className="grid grid-cols-5 gap-2">
+          {SYNC_INTERVAL_PRESETS.map(m => (
             <button
-              key={profile.id}
-              onClick={() => handleProfileChange(profile.id)}
+              key={m}
+              onClick={() => setMinutes(m)}
               className={cn(
-                'w-full flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
-                currentProfile === profile.id
-                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-border)]/80'
+                'py-2 rounded-lg text-xs font-medium transition-colors border',
+                minutes === m
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-foreground)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
               )}
             >
-              <div className={cn(
-                'w-4 h-4 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0',
-                currentProfile === profile.id
-                  ? 'border-[var(--color-primary)]'
-                  : 'border-[var(--color-muted-foreground)]'
-              )}>
-                {currentProfile === profile.id && (
-                  <div className="w-2 h-2 rounded-full bg-[var(--color-primary)]" />
-                )}
-              </div>
-              <div>
-                <p className="font-medium text-[var(--color-foreground)]">{profile.name}</p>
-                <p className="text-xs text-[var(--color-muted-foreground)]">{profile.desc}</p>
-              </div>
+              {m}m
             </button>
           ))}
         </div>
@@ -210,86 +605,69 @@ function GeneralTab() {
   )
 }
 
-// Security Tab
-function SecurityTab({ onClose }: { onClose: () => void }) {
-  const { hasRecoveryPhrase, passwordHint } = useAppStore()
-  const [showPasswordChange, setShowPasswordChange] = useState(false)
-  const [showHintUpdate, setShowHintUpdate] = useState(false)
-  const [showPinRegen, setShowPinRegen] = useState(false)
+// ---------------------------------------------------------------------------
+// Drill-in: Privacy details
+// ---------------------------------------------------------------------------
 
-  if (showPasswordChange) {
-    return <PasswordChangeForm onBack={() => setShowPasswordChange(false)} onClose={onClose} />
-  }
-
-  if (showHintUpdate) {
-    return <HintUpdateForm onBack={() => setShowHintUpdate(false)} />
-  }
-
-  if (showPinRegen) {
-    return <PinRegenForm onBack={() => setShowPinRegen(false)} />
-  }
-
+function PrivacyDetailsView() {
   return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setShowPasswordChange(true)}
-        className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
-            <Lock className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-          </div>
-          <div className="text-left">
-            <p className="font-medium text-[var(--color-foreground)]">Change Password</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">Update your master password</p>
-          </div>
-        </div>
-        <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
-      </button>
+    <div className="px-3 sm:px-4 py-4 space-y-5">
+      <p className="text-xs text-[var(--color-muted-foreground)] leading-relaxed px-1">
+        Your vault — accounts, passwords, notes — is encrypted on your machine and is{' '}
+        <span className="text-[var(--color-foreground)] font-medium">never transmitted</span>.
+        Telemetry is opt-in and limited to coarse usage signals that help us iterate on
+        features that actually get used.
+      </p>
 
-      <button
-        onClick={() => setShowHintUpdate(true)}
-        className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
-            <HelpCircle className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-          </div>
-          <div className="text-left">
-            <p className="font-medium text-[var(--color-foreground)]">Password Hint</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
-              {passwordHint ? 'Update your hint' : 'Add a password hint'}
-            </p>
-          </div>
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)] px-1">
+          Collected when on
+        </p>
+        <div className="rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] p-3 space-y-1.5 text-xs text-[var(--color-muted-foreground)] leading-relaxed">
+          <p>• App launches and cold-boot latency</p>
+          <p>• Feature usage counts (account add/edit/delete, filters, wizard steps)</p>
+          <p>• Error codes from the UI — never error message bodies</p>
+          <p>• A salted, daily-rotating hash for anonymous DAU/MAU counts</p>
         </div>
-        <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
-      </button>
+      </div>
 
-      <button
-        onClick={() => setShowPinRegen(true)}
-        className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
-            <Shield className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-          </div>
-          <div className="text-left">
-            <p className="font-medium text-[var(--color-foreground)]">
-              {hasRecoveryPhrase ? 'Regenerate Recovery PIN' : 'Generate Recovery PIN'}
-            </p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
-              {hasRecoveryPhrase ? 'Create a new recovery PIN' : 'Set up password recovery'}
-            </p>
-          </div>
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)] px-1">
+          Never collected
+        </p>
+        <div className="rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] p-3 space-y-1.5 text-xs text-[var(--color-muted-foreground)] leading-relaxed">
+          <p>• Anything inside your vault (accounts, passwords, Riot IDs, notes, tags)</p>
+          <p>• IP addresses, hostnames, or device identifiers</p>
         </div>
-        <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
-      </button>
+      </div>
+
+      <div className="rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] divide-y divide-[var(--color-border)]/60 overflow-hidden">
+        <RowFrame
+          icon={<FolderOpen className="w-4 h-4" />}
+          title="Open logs folder"
+          subtitle="Inspect raw JSON event records on disk"
+          onClick={() => OpenUsageLogsFolder().catch(console.error)}
+          trailing={<ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)]" />}
+        />
+        <RowFrame
+          icon={<ExternalLink className="w-4 h-4" />}
+          title="Read the telemetry policy"
+          subtitle="Full list of events, guarantees, and controls on GitHub"
+          onClick={() =>
+            OpenReleasePage('https://github.com/ajanitshimanga/Deckstr/blob/master/TELEMETRY.md').catch(console.error)
+          }
+          trailing={<ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)]" />}
+        />
+      </div>
     </div>
   )
 }
 
-// Password Change Form
-function PasswordChangeForm({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
+// ---------------------------------------------------------------------------
+// Drill-in: Change password
+// ---------------------------------------------------------------------------
+
+function PasswordChangeView({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
   const { changePassword, clearError, error } = useAppStore()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -310,113 +688,65 @@ function PasswordChangeForm({ onBack, onClose }: { onBack: () => void; onClose: 
     setLoading(false)
 
     if (result) {
-      onClose() // Close settings, recovery phrase modal will show
+      onBack()
+      onClose() // Close settings so the recovery phrase modal can take over
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] flex items-center gap-1"
-      >
-        <ChevronRight className="w-4 h-4 rotate-180" />
-        Back to Security
-      </button>
+    <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-4 space-y-4">
+      <FormField label="Current password">
+        <PasswordInput
+          value={currentPassword}
+          onChange={setCurrentPassword}
+          placeholder="Enter current password"
+          show={showPasswords}
+          onToggleShow={() => setShowPasswords(!showPasswords)}
+          autoFocus
+        />
+      </FormField>
 
-      <div className="space-y-3">
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-foreground)]">Current Password</label>
-          <div className="relative">
-            <input
-              type={showPasswords ? 'text' : 'password'}
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Enter current password"
-              className={cn(
-                'w-full px-3 py-2 pr-10 rounded-lg text-sm',
-                'bg-[var(--color-muted)] border border-[var(--color-border)]',
-                'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-                'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
-              )}
-              autoFocus
-            />
-            <button
-              type="button"
-              onClick={() => setShowPasswords(!showPasswords)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-            >
-              {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-foreground)]">New Password</label>
-          <input
-            type={showPasswords ? 'text' : 'password'}
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="Enter new password"
-            className={cn(
-              'w-full px-3 py-2 rounded-lg text-sm',
-              'bg-[var(--color-muted)] border border-[var(--color-border)]',
-              'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
-            )}
-          />
-          {newPassword.length > 0 && newPassword.length < 6 && (
-            <p className="text-xs text-amber-400">Password must be at least 6 characters</p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-foreground)]">Confirm Password</label>
-          <input
-            type={showPasswords ? 'text' : 'password'}
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="Confirm new password"
-            className={cn(
-              'w-full px-3 py-2 rounded-lg text-sm',
-              'bg-[var(--color-muted)] border',
-              newPassword && confirmPassword && !passwordsMatch
-                ? 'border-red-500'
-                : 'border-[var(--color-border)]',
-              'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
-            )}
-          />
-          {newPassword && confirmPassword && !passwordsMatch && (
-            <p className="text-xs text-red-400">Passwords do not match</p>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-          <p className="text-xs text-red-400">{error}</p>
-        </div>
-      )}
-
-      <button
-        type="submit"
-        disabled={!isValid || loading}
-        className={cn(
-          'w-full py-2.5 rounded-lg font-medium text-sm transition-colors',
-          'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
+      <FormField label="New password">
+        <PasswordInput
+          value={newPassword}
+          onChange={setNewPassword}
+          placeholder="Enter new password"
+          show={showPasswords}
+          onToggleShow={() => setShowPasswords(!showPasswords)}
+        />
+        {newPassword.length > 0 && newPassword.length < 6 && (
+          <p className="text-xs text-amber-400">Password must be at least 6 characters</p>
         )}
-      >
-        {loading ? 'Changing...' : 'Change Password'}
-      </button>
+      </FormField>
+
+      <FormField label="Confirm password">
+        <PasswordInput
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          placeholder="Confirm new password"
+          show={showPasswords}
+          onToggleShow={() => setShowPasswords(!showPasswords)}
+          invalid={!!newPassword && !!confirmPassword && !passwordsMatch}
+        />
+        {newPassword && confirmPassword && !passwordsMatch && (
+          <p className="text-xs text-red-400">Passwords do not match</p>
+        )}
+      </FormField>
+
+      {error && <ErrorBanner message={error} />}
+
+      <SubmitButton loading={loading} disabled={!isValid}>
+        {loading ? 'Changing…' : 'Change password'}
+      </SubmitButton>
     </form>
   )
 }
 
-// Hint Update Form
-function HintUpdateForm({ onBack }: { onBack: () => void }) {
+// ---------------------------------------------------------------------------
+// Drill-in: Password hint
+// ---------------------------------------------------------------------------
+
+function HintUpdateView({ onBack }: { onBack: () => void }) {
   const { updatePasswordHint, passwordHint, clearError, error } = useAppStore()
   const [hint, setHint] = useState(passwordHint || '')
   const [loading, setLoading] = useState(false)
@@ -431,77 +761,53 @@ function HintUpdateForm({ onBack }: { onBack: () => void }) {
 
     if (result) {
       setSuccess(true)
-      setTimeout(onBack, 1500)
+      setTimeout(onBack, 1200)
     }
   }
 
   if (success) {
     return (
-      <div className="text-center py-8">
+      <div className="px-4 py-12 text-center">
         <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-green-500/20 flex items-center justify-center">
-          <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
+          <Check className="w-6 h-6 text-green-400" />
         </div>
-        <p className="font-medium text-[var(--color-foreground)]">Hint Updated!</p>
+        <p className="font-medium text-[var(--color-foreground)]">Hint updated</p>
       </div>
     )
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] flex items-center gap-1"
-      >
-        <ChevronRight className="w-4 h-4 rotate-180" />
-        Back to Security
-      </button>
-
-      <div className="space-y-1.5">
-        <label className="text-xs font-medium text-[var(--color-foreground)]">Password Hint</label>
+    <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-4 space-y-4">
+      <FormField label="Password hint" hint="Shown on the lock screen. Leave empty to remove.">
         <input
           type="text"
           value={hint}
-          onChange={(e) => setHint(e.target.value)}
+          onChange={e => setHint(e.target.value)}
           placeholder="e.g., My favorite pet's name"
           className={cn(
             'w-full px-3 py-2 rounded-lg text-sm',
             'bg-[var(--color-muted)] border border-[var(--color-border)]',
             'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-            'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]',
           )}
           autoFocus
         />
-        <p className="text-xs text-[var(--color-muted-foreground)]">
-          Shown on the login screen. Leave empty to remove.
-        </p>
-      </div>
+      </FormField>
 
-      {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-          <p className="text-xs text-red-400">{error}</p>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      <button
-        type="submit"
-        disabled={loading}
-        className={cn(
-          'w-full py-2.5 rounded-lg font-medium text-sm transition-colors',
-          'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
-        )}
-      >
-        {loading ? 'Saving...' : (hint ? 'Save Hint' : 'Remove Hint')}
-      </button>
+      <SubmitButton loading={loading}>
+        {loading ? 'Saving…' : hint ? 'Save hint' : 'Remove hint'}
+      </SubmitButton>
     </form>
   )
 }
 
-// PIN Regeneration Form
-function PinRegenForm({ onBack }: { onBack: () => void }) {
+// ---------------------------------------------------------------------------
+// Drill-in: Recovery PIN
+// ---------------------------------------------------------------------------
+
+function PinRegenView({ onBack }: { onBack: () => void }) {
   const { regenerateRecoveryPhrase, clearError, error, hasRecoveryPhrase } = useAppStore()
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -516,409 +822,145 @@ function PinRegenForm({ onBack }: { onBack: () => void }) {
     const result = await regenerateRecoveryPhrase(password)
     setLoading(false)
 
-    if (result) {
-      onBack() // Recovery phrase modal will show
-    }
+    if (result) onBack()
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] flex items-center gap-1"
-      >
-        <ChevronRight className="w-4 h-4 rotate-180" />
-        Back to Security
-      </button>
-
-      <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+    <form onSubmit={handleSubmit} className="px-3 sm:px-4 py-4 space-y-4">
+      <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
         <Shield className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
         <div className="text-sm">
-          <p className="font-medium text-[var(--color-foreground)]">Security Notice</p>
-          <p className="text-[var(--color-muted-foreground)] mt-1">
+          <p className="font-medium text-[var(--color-foreground)]">Security notice</p>
+          <p className="text-[var(--color-muted-foreground)] mt-1 text-xs leading-relaxed">
             {hasRecoveryPhrase
-              ? 'This will invalidate your current recovery PIN.'
-              : 'Your recovery PIN can reset your password if forgotten.'}
+              ? 'Generating a new PIN invalidates your current one. Save the new PIN somewhere safe.'
+              : 'Your recovery PIN can reset your password if forgotten. Save it somewhere safe.'}
           </p>
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <label className="text-xs font-medium text-[var(--color-foreground)]">Current Password</label>
-        <div className="relative">
-          <input
-            type={showPassword ? 'text' : 'password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            className={cn(
-              'w-full px-3 py-2 pr-10 rounded-lg text-sm',
-              'bg-[var(--color-muted)] border border-[var(--color-border)]',
-              'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]'
-            )}
-            autoFocus
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-          >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
+      <FormField label="Current password">
+        <PasswordInput
+          value={password}
+          onChange={setPassword}
+          placeholder="Enter your password"
+          show={showPassword}
+          onToggleShow={() => setShowPassword(!showPassword)}
+          autoFocus
+        />
+      </FormField>
 
-      {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-          <p className="text-xs text-red-400">{error}</p>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      <button
-        type="submit"
-        disabled={password.length < 6 || loading}
-        className={cn(
-          'w-full py-2.5 rounded-lg font-medium text-sm transition-colors',
-          'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
-        )}
-      >
-        {loading ? 'Verifying...' : (hasRecoveryPhrase ? 'Regenerate PIN' : 'Generate PIN')}
-      </button>
+      <SubmitButton loading={loading} disabled={password.length < 6}>
+        {loading ? 'Verifying…' : hasRecoveryPhrase ? 'Regenerate PIN' : 'Generate PIN'}
+      </SubmitButton>
     </form>
   )
 }
 
-// Data & Privacy Tab
-function PrivacyTab() {
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [saving, setSaving] = useState(false)
+// ---------------------------------------------------------------------------
+// Form primitives
+// ---------------------------------------------------------------------------
 
-  // Read the live state on mount — the source of truth is the marker file
-  // on disk, not a store value, so we always re-query when this tab opens.
-  useEffect(() => {
-    IsTelemetryEnabled().then(setEnabled).catch(() => setEnabled(false))
-  }, [])
-
-  const handleToggle = async () => {
-    if (enabled === null || saving) return
-    const next = !enabled
-    setSaving(true)
-    try {
-      await SetTelemetryEnabled(next)
-      setEnabled(next)
-    } catch (e) {
-      console.error('telemetry toggle failed', e)
-    } finally {
-      setSaving(false)
-    }
-  }
-
+function FormField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="space-y-6">
-      {/* Heading */}
-      <div>
-        <h4 className="text-sm font-semibold text-[var(--color-foreground)]">
-          How Deckstr uses your data
-        </h4>
-        <p className="text-xs text-[var(--color-muted-foreground)] mt-1 leading-relaxed">
-          Your vault — accounts, passwords, notes — is encrypted on your
-          machine and is <span className="text-[var(--color-foreground)]">never transmitted</span>.
-          Separately, we can collect coarse usage events to help us iterate on
-          features that actually get used. This is local-only today and fully
-          optional.
-        </p>
-      </div>
-
-      {/* Master toggle */}
-      <div className="flex items-start justify-between gap-4 pt-4 border-t border-[var(--color-border)]">
-        <div className="min-w-0">
-          <p className="font-medium text-[var(--color-foreground)]">
-            Share anonymous usage data
-          </p>
-          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
-            Help make Deckstr better and data-driven with telemetry for
-            feature iteration.
-          </p>
-        </div>
-        <button
-          onClick={handleToggle}
-          disabled={enabled === null || saving}
-          className={cn(
-            'w-11 h-6 rounded-full transition-colors relative flex-shrink-0',
-            enabled ? 'bg-green-500' : 'bg-zinc-600',
-            (enabled === null || saving) && 'opacity-60 cursor-not-allowed'
-          )}
-        >
-          <div className={cn(
-            'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
-            enabled ? 'translate-x-6' : 'translate-x-1'
-          )} />
-        </button>
-      </div>
-
-      {/* What we collect */}
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider">
-          What's collected when on
-        </p>
-        <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1.5 leading-relaxed">
-          <li>• App launches and cold-boot latency</li>
-          <li>• Feature usage counts (account add/edit/delete, filters, wizard steps)</li>
-          <li>• Error codes from the UI — never error message bodies</li>
-          <li>• A salted daily-rotating hash for anonymous DAU/MAU counts</li>
-        </ul>
-        <p className="text-xs font-medium text-[var(--color-muted-foreground)] uppercase tracking-wider pt-2">
-          What's never collected
-        </p>
-        <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1.5 leading-relaxed">
-          <li>• Anything inside your vault (accounts, passwords, Riot IDs, notes, tags)</li>
-          <li>• IP addresses, hostnames, or device identifiers</li>
-        </ul>
-      </div>
-
-      {/* Actions */}
-      <div className="pt-4 border-t border-[var(--color-border)] space-y-2">
-        <button
-          onClick={() => OpenUsageLogsFolder().catch(console.error)}
-          className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
-              <FolderOpen className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-            </div>
-            <div className="text-left">
-              <p className="font-medium text-[var(--color-foreground)]">Open logs folder</p>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                Inspect the raw JSON event records on disk
-              </p>
-            </div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
-        </button>
-
-        <button
-          onClick={() => OpenReleasePage('https://github.com/ajanitshimanga/Deckstr/blob/master/TELEMETRY.md').catch(console.error)}
-          className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-[var(--color-muted)]/30 transition-colors group"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)]/50 flex items-center justify-center">
-              <ExternalLink className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-            </div>
-            <div className="text-left">
-              <p className="font-medium text-[var(--color-foreground)]">Read the telemetry policy</p>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                Full list of events, guarantees, and controls on GitHub
-              </p>
-            </div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]" />
-        </button>
-      </div>
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-[var(--color-foreground)]">{label}</label>
+      {children}
+      {hint && <p className="text-xs text-[var(--color-muted-foreground)]">{hint}</p>}
     </div>
   )
 }
 
-// Ranked Tab
-function RankedTab() {
-  const {
-    settings,
-    updateSettings,
-    detectAndUpdateRanks,
-    isDetecting,
-    lastRankSyncTime,
-  } = useAppStore()
-
-  const autoRankSync = settings?.autoRankSync !== false
-  const syncIntervalMs = settings?.rankSyncIntervalMs || 600000
-  const syncIntervalMin = Math.round(syncIntervalMs / 60000)
-
-  const handleToggleAutoSync = () => {
-    if (settings) {
-      updateSettings({ ...settings, autoRankSync: !autoRankSync })
-    }
-  }
-
-  const handleIntervalChange = (minutes: number) => {
-    if (settings) {
-      updateSettings({ ...settings, rankSyncIntervalMs: minutes * 60000 })
-    }
-  }
-
-  const formatLastSync = (timestamp: number | null) => {
-    if (!timestamp) return 'Never'
-    const diff = Date.now() - timestamp
-    const minutes = Math.floor(diff / 60000)
-    if (minutes < 1) return 'Just now'
-    if (minutes < 60) return `${minutes}m ago`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours}h ago`
-    return 'Over a day ago'
-  }
-
+function PasswordInput({
+  value,
+  onChange,
+  placeholder,
+  show,
+  onToggleShow,
+  invalid,
+  autoFocus,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  show: boolean
+  onToggleShow: () => void
+  invalid?: boolean
+  autoFocus?: boolean
+}) {
   return (
-    <div className="space-y-6">
-      {/* Auto-sync toggle */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-medium text-[var(--color-foreground)]">Auto-sync Ranks</p>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
-            Automatically fetch ranks when account is detected
-          </p>
-        </div>
-        <button
-          onClick={handleToggleAutoSync}
-          className={cn(
-            "w-11 h-6 rounded-full transition-colors relative",
-            autoRankSync ? "bg-green-500" : "bg-zinc-600"
-          )}
-        >
-          <div className={cn(
-            "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-            autoRankSync ? "translate-x-6" : "translate-x-1"
-          )} />
-        </button>
-      </div>
-
-      {/* Sync interval */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium text-[var(--color-foreground)]">Sync Interval</p>
-            <p className="text-xs text-[var(--color-muted-foreground)]">
-              Minimum time between rank checks
-            </p>
-          </div>
-          <span className="text-sm font-medium text-[var(--color-foreground)]">
-            {syncIntervalMin} min
-          </span>
-        </div>
-        <input
-          type="range"
-          min={2}
-          max={30}
-          step={1}
-          value={syncIntervalMin}
-          onChange={(e) => handleIntervalChange(parseInt(e.target.value))}
-          className="w-full accent-[var(--color-primary)]"
-        />
-        <div className="flex justify-between text-xs text-[var(--color-muted-foreground)]">
-          <span>2 min</span>
-          <span>30 min</span>
-        </div>
-      </div>
-
-      <div className="pt-4 border-t border-[var(--color-border)] space-y-4">
-        {/* Last synced */}
-        <div className="flex items-center gap-2 text-sm">
-          <Clock className="w-4 h-4 text-[var(--color-muted-foreground)]" />
-          <span className="text-[var(--color-muted-foreground)]">Last synced:</span>
-          <span className="text-[var(--color-foreground)]">{formatLastSync(lastRankSyncTime)}</span>
-        </div>
-
-        {/* Manual detect button */}
-        <button
-          onClick={() => detectAndUpdateRanks()}
-          disabled={isDetecting}
-          className={cn(
-            'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-medium text-sm transition-colors',
-            'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
-            'disabled:opacity-50 disabled:cursor-not-allowed'
-          )}
-        >
-          {isDetecting ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              Detecting...
-            </>
-          ) : (
-            <>
-              <Zap className="w-4 h-4" />
-              Detect Ranks Now
-            </>
-          )}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// Updates Tab
-function UpdatesTab() {
-  const {
-    settings,
-    updateSettings,
-    appVersion,
-    isCheckingForUpdates,
-    checkForUpdates,
-  } = useAppStore()
-
-  const autoCheckUpdates = settings?.autoCheckUpdates !== false
-
-  const handleToggleAutoCheck = () => {
-    if (settings) {
-      updateSettings({ ...settings, autoCheckUpdates: !autoCheckUpdates })
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Version info */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--color-muted)]/30">
-        <div>
-          <p className="text-xs text-[var(--color-muted-foreground)]">Current Version</p>
-          <p className="font-mono font-medium text-[var(--color-foreground)]">
-            {appVersion || 'dev'}
-          </p>
-        </div>
-      </div>
-
-      {/* Auto-check toggle */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-medium text-[var(--color-foreground)]">Auto-check Updates</p>
-          <p className="text-xs text-[var(--color-muted-foreground)]">
-            Check for updates when app starts
-          </p>
-        </div>
-        <button
-          onClick={handleToggleAutoCheck}
-          className={cn(
-            "w-11 h-6 rounded-full transition-colors relative",
-            autoCheckUpdates ? "bg-green-500" : "bg-zinc-600"
-          )}
-        >
-          <div className={cn(
-            "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-            autoCheckUpdates ? "translate-x-6" : "translate-x-1"
-          )} />
-        </button>
-      </div>
-
-      {/* Check now button */}
-      <button
-        onClick={() => checkForUpdates()}
-        disabled={isCheckingForUpdates}
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
         className={cn(
-          'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-medium text-sm transition-colors',
-          'bg-[var(--color-muted)]/50 hover:bg-[var(--color-muted)] text-[var(--color-foreground)]',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
+          'w-full px-3 py-2 pr-10 rounded-lg text-sm',
+          'bg-[var(--color-muted)] border',
+          invalid ? 'border-red-500' : 'border-[var(--color-border)]',
+          'text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]',
+          'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]',
         )}
+      />
+      <button
+        type="button"
+        onClick={onToggleShow}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
       >
-        {isCheckingForUpdates ? (
-          <>
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            Checking...
-          </>
-        ) : (
-          <>
-            <RefreshCw className="w-4 h-4" />
-            Check for Updates
-          </>
-        )}
+        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
       </button>
     </div>
   )
 }
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+      <p className="text-xs text-red-400">{message}</p>
+    </div>
+  )
+}
+
+function SubmitButton({
+  loading,
+  disabled,
+  children,
+}: {
+  loading: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled || loading}
+      className={cn(
+        'w-full py-2.5 rounded-lg font-medium text-sm transition-colors',
+        'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white',
+        'disabled:opacity-50 disabled:cursor-not-allowed',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatLastSync(timestamp: number | null): string {
+  if (!timestamp) return 'never'
+  const diff = Date.now() - timestamp
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return 'over a day ago'
+}
+
