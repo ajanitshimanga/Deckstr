@@ -20,6 +20,8 @@ import {
   Activity,
   Check,
   Info,
+  Upload,
+  AlertTriangle,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { IconButton } from './ui/IconButton'
@@ -28,6 +30,7 @@ import {
   SetTelemetryEnabled,
   OpenUsageLogsFolder,
   OpenReleasePage,
+  OpenVaultFolder,
 } from '../../wailsjs/go/main/App'
 
 // SettingsModal renders as a full-bleed page that fills the entire app body
@@ -42,6 +45,7 @@ type View =
   | 'password'
   | 'hint'
   | 'pin'
+  | 'importVault'
   | 'updateSpeed'
   | 'syncInterval'
   | 'privacyDetails'
@@ -83,6 +87,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     password: 'Change password',
     hint: 'Password hint',
     pin: 'Recovery PIN',
+    importVault: 'Import vault',
     updateSpeed: 'Update speed',
     syncInterval: 'Sync interval',
     privacyDetails: 'Data & privacy',
@@ -131,6 +136,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         {view === 'password' && <PasswordChangeView onBack={() => setView('main')} onClose={onClose} />}
         {view === 'hint' && <HintUpdateView onBack={() => setView('main')} />}
         {view === 'pin' && <PinRegenView onBack={() => setView('main')} />}
+        {view === 'importVault' && <ImportVaultView onBack={() => setView('main')} onClose={onClose} />}
         {view === 'updateSpeed' && <UpdateSpeedView />}
         {view === 'syncInterval' && <SyncIntervalView />}
         {view === 'privacyDetails' && <PrivacyDetailsView />}
@@ -240,6 +246,12 @@ function MainView({ setView, onClose }: { setView: (v: View) => void; onClose: (
           subtitle={hasRecoveryPhrase ? 'Replace your current recovery PIN' : 'Set up password recovery'}
           value={hasRecoveryPhrase ? 'Active' : undefined}
           onClick={() => setView('pin')}
+        />
+        <DrillRow
+          icon={<Upload className="w-4 h-4" />}
+          title="Import vault from file"
+          subtitle="Restore from a backup or migrate from another PC"
+          onClick={() => setView('importVault')}
         />
       </Section>
 
@@ -800,6 +812,112 @@ function HintUpdateView({ onBack }: { onBack: () => void }) {
         {loading ? 'Saving…' : hint ? 'Save hint' : 'Remove hint'}
       </SubmitButton>
     </form>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Drill-in: Import vault from file
+// ---------------------------------------------------------------------------
+//
+// Catch-all recovery for any scenario the in-banner adoption can't reach:
+// backup files, vaults copied off another machine, files at non-standard
+// paths. Picking a file signs the user out, archives the existing vault to
+// vault.osm.replaced-<unix>, and routes them to the unlock screen with the
+// imported vault's username pre-filled.
+
+function ImportVaultView({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
+  const { importVaultFromFile, error, clearError } = useAppStore()
+  const [loading, setLoading] = useState(false)
+
+  const handlePick = async () => {
+    clearError()
+    setLoading(true)
+    try {
+      const result = await importVaultFromFile()
+      if (result.ok) {
+        // Re-init has already happened in the store; close settings so the
+        // unlock screen surfaces with the imported vault's username
+        // pre-filled.
+        onClose()
+      }
+      // result.cancelled → user closed the file picker; stay on this view.
+      // !result.ok && !result.cancelled → real error; the store already set
+      //   `error`, surfaced by the alert below.
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="px-3 sm:px-4 py-4 space-y-4">
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        Back
+      </button>
+
+      <div className="space-y-3">
+        <h2 className="text-base font-semibold text-[var(--color-foreground)]">
+          Import vault from file
+        </h2>
+        <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed">
+          Restore from a backup, migrate from another PC, or recover an
+          orphaned vault. Pick a <code className="px-1 py-0.5 rounded bg-[var(--color-card)] text-xs">.osm</code> file
+          and we'll switch to it.
+        </p>
+      </div>
+
+      <div className="p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+          <div className="space-y-1.5 text-xs text-[var(--color-foreground)]">
+            <p className="font-medium">What happens next</p>
+            <ul className="space-y-1 text-[var(--color-muted-foreground)] list-disc pl-4">
+              <li>You'll be signed out.</li>
+              <li>
+                Your current vault is archived as{' '}
+                <code className="px-1 py-0.5 rounded bg-[var(--color-card)] text-[10px]">vault.osm.replaced-&lt;timestamp&gt;</code>{' '}
+                — it's not deleted.
+              </li>
+              <li>The unlock screen pre-fills the imported vault's username.</li>
+              <li>You'll need that vault's password and recovery PIN.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-lg bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/20">
+          <p className="text-xs text-[var(--color-destructive)]">{error}</p>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={handlePick}
+        disabled={loading}
+        className={cn(
+          'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors',
+          loading
+            ? 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)] cursor-not-allowed'
+            : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white cursor-pointer'
+        )}
+      >
+        <Upload className="w-4 h-4" />
+        {loading ? 'Importing…' : 'Pick vault file…'}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => { void OpenVaultFolder() }}
+        className="w-full flex items-center justify-center gap-2 py-2 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+      >
+        <FolderOpen className="w-4 h-4" />
+        Show my vault folder
+      </button>
+    </div>
   )
 }
 

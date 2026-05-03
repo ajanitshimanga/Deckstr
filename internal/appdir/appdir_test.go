@@ -181,6 +181,54 @@ func TestResolveIn_MergeNeverOverwrites(t *testing.T) {
 	}
 }
 
+// TestLegacyVaultPath_NoLegacyDir pins the side-effect-free probe contract:
+// when there's no OpenSmurfManager folder under the user's config dir, the
+// helper returns ("", nil) instead of creating anything or erroring.
+func TestLegacyVaultPath_NoLegacyDir(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	got, err := LegacyVaultPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("LegacyVaultPath = %q, want empty", got)
+	}
+}
+
+// TestLegacyVaultPath_FindsOrphanedFile pins that the helper surfaces the
+// exact path of an orphaned vault.osm sitting in a stale OpenSmurfManager
+// folder, so the storage layer can read its header without re-running the
+// full Path() migration (which has side effects).
+func TestLegacyVaultPath_FindsOrphanedFile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	legacyDir := filepath.Join(root, LegacyName)
+	if err := os.MkdirAll(legacyDir, 0700); err != nil {
+		t.Fatalf("seed legacy dir: %v", err)
+	}
+	legacyVault := filepath.Join(legacyDir, "vault.osm")
+	if err := os.WriteFile(legacyVault, []byte("legacy"), 0600); err != nil {
+		t.Fatalf("seed legacy vault: %v", err)
+	}
+
+	got, err := LegacyVaultPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != legacyVault {
+		t.Errorf("LegacyVaultPath = %q, want %q", got, legacyVault)
+	}
+	// And the call must not have moved or deleted anything.
+	if _, err := os.Stat(legacyVault); err != nil {
+		t.Errorf("legacy vault disappeared: %v", err)
+	}
+}
+
 func dirExistsT(t *testing.T, path string) bool {
 	t.Helper()
 	info, err := os.Stat(path)

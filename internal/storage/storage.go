@@ -83,6 +83,11 @@ type StorageService struct {
 	// through ConsumePendingRecoveryRotation, which clears it from memory
 	// immediately on read.
 	pendingRotatedPhrase string
+
+	// legacyVaultPathOverride, if non-empty, replaces the appdir-resolved
+	// legacy vault location. Tests use it to point detection/adoption at a
+	// synthetic legacy file under a tmp dir without faking os.UserConfigDir.
+	legacyVaultPathOverride string
 }
 
 // NewStorageService creates a new storage service
@@ -739,6 +744,243 @@ func (s *StorageService) saveVaultFile(vault models.Vault) error {
 // GetVaultPath returns the path to the vault file (for debugging/info)
 func (s *StorageService) GetVaultPath() string {
 	return s.vaultPath
+}
+
+// LegacyVaultInfo describes a vault.osm sitting outside the current data dir
+// — typically left behind by the OpenSmurfManager → Deckstr rebrand when both
+// directories had a vault file and the merger refused to overwrite. The UI
+// surfaces this so users can adopt the abandoned vault instead of being
+// stuck on a fresh (and to them unknown) one.
+type LegacyVaultInfo struct {
+	Path       string    `json:"path"`
+	Source     string    `json:"source"`
+	Username   string    `json:"username"`
+	Version    int       `json:"version"`
+	SizeBytes  int64     `json:"sizeBytes"`
+	ModifiedAt time.Time `json:"modifiedAt"`
+}
+
+// resolveLegacyVaultPath returns the legacy vault path to probe, honouring
+// any test override. Returns "" when the resolved location doesn't exist.
+func (s *StorageService) resolveLegacyVaultPath() (string, error) {
+	if s.legacyVaultPathOverride != "" {
+		if _, err := os.Stat(s.legacyVaultPathOverride); err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		return s.legacyVaultPathOverride, nil
+	}
+	return appdir.LegacyVaultPath()
+}
+
+// DetectLegacyVault returns metadata about an orphaned legacy vault if one
+// exists, or nil if there isn't one. Reads the vault header without
+// decrypting, so it's safe to call from the unlock screen.
+//
+// Idempotent and side-effect-free: probing this on every initialize() call
+// is fine. The corresponding adopt step is the only thing that touches disk.
+func (s *StorageService) DetectLegacyVault() (*LegacyVaultInfo, error) {
+	legacyPath, err := s.resolveLegacyVaultPath()
+	if err != nil {
+		return nil, err
+	}
+	if legacyPath == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(legacyPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat legacy vault: %w", err)
+	}
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read legacy vault: %w", err)
+	}
+	var v models.Vault
+	if err := json.Unmarshal(data, &v); err != nil {
+		// File exists but isn't a valid vault — surface it as "found but
+		// unreadable" so the UI can warn rather than silently hide it.
+		return &LegacyVaultInfo{
+			Path:       legacyPath,
+			Source:     appdir.LegacyName,
+			SizeBytes:  info.Size(),
+			ModifiedAt: info.ModTime(),
+		}, nil
+	}
+	return &LegacyVaultInfo{
+		Path:       legacyPath,
+		Source:     appdir.LegacyName,
+		Username:   v.Username,
+		Version:    v.Version,
+		SizeBytes:  info.Size(),
+		ModifiedAt: info.ModTime(),
+	}, nil
+}
+
+// AdoptLegacyVault replaces the current vault file with the legacy one,
+// archiving the existing current vault to vault.osm.replaced-<unix> first
+// so nothing is lost. Also carries over client.id so the user's telemetry
+// identity stays continuous (same person, same install). The legacy
+// folder is removed entirely afterwards — leaving anything behind would
+// just keep tripping the orphan probe.
+//
+// Refuses to run while the vault is unlocked: adoption changes the
+// credentials the user is expected to type next, and we don't want the
+// in-memory unlocked state to disagree with what's on disk.
+//
+// Returns an AdoptionResult describing what was carried over so callers
+// can populate vault.transition telemetry without re-stat'ing the disk.
+func (s *StorageService) AdoptLegacyVault() (AdoptionResult, error) {
+	var result AdoptionResult
+
+	legacyPath, err := s.resolveLegacyVaultPath()
+	if err != nil {
+		return result, err
+	}
+	if legacyPath == "" {
+		return result, errors.New("no legacy vault found")
+	}
+	result.Source = legacyPath
+
+	// Detect whether the current vault would be archived BEFORE we touch
+	// disk. After replaceCurrentWithVaultFile completes the file's been
+	// renamed, so checking afterwards would always see "no current" and
+	// mis-report the telemetry attribute.
+	if _, err := os.Stat(s.vaultPath); err == nil {
+		result.ArchivedCurrent = true
+	}
+
+	if err := s.replaceCurrentWithVaultFile(legacyPath); err != nil {
+		return result, err
+	}
+
+	// Whole-folder cleanup beyond just vault.osm. The vault is the
+	// security-critical bit; client.id is a UUID for telemetry continuity;
+	// logs/ are already-written telemetry rows we don't want to merge into
+	// the new logs (would confuse rotation + create duplicate-looking
+	// events). Keeping the adopted user on a clean canonical dir is
+	// simpler than per-file copy rules.
+	legacyDir := filepath.Dir(legacyPath)
+	currentDir := filepath.Dir(s.vaultPath)
+
+	carried, err := carryOverFile(filepath.Join(legacyDir, "client.id"), filepath.Join(currentDir, "client.id"))
+	if err == nil {
+		result.ClientIDCarried = carried
+	}
+	// client.id failures are non-fatal — vault adopt succeeded, telemetry
+	// continuity is a nice-to-have. The next event will just use whatever
+	// client.id is on disk (possibly the new one).
+
+	if err := os.RemoveAll(legacyDir); err == nil {
+		result.LegacyDirRemoved = true
+	}
+	return result, nil
+}
+
+// AdoptionResult describes the side effects of a successful AdoptLegacyVault
+// call. Used by the App layer to build a vault.transition telemetry event
+// without having to re-inspect the filesystem.
+type AdoptionResult struct {
+	Source           string
+	ArchivedCurrent  bool
+	ClientIDCarried  bool
+	LegacyDirRemoved bool
+}
+
+// carryOverFile copies src to dst, archiving any existing dst as
+// dst.replaced-<unix> first. Returns (carried, err) where carried is true
+// iff the destination got the source's bytes installed. Missing src is a
+// no-op (returns false, nil) — callers use this for best-effort sidecars
+// like client.id where absence is fine.
+func carryOverFile(src, dst string) (bool, error) {
+	srcBytes, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read %s: %w", src, err)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		backup := fmt.Sprintf("%s.replaced-%d", dst, time.Now().Unix())
+		if err := os.Rename(dst, backup); err != nil {
+			return false, fmt.Errorf("backup %s: %w", dst, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat %s: %w", dst, err)
+	}
+	if err := os.WriteFile(dst, srcBytes, 0600); err != nil {
+		return false, fmt.Errorf("write %s: %w", dst, err)
+	}
+	return true, nil
+}
+
+// ImportVaultFromPath replaces the current vault with the bytes from the
+// given file. Generalises AdoptLegacyVault for arbitrary user-supplied
+// paths (backup files, copies from another machine, vault.osm pulled off
+// a dead disk). Same archive-on-overwrite + parse-probe safety as adoption,
+// but does NOT delete the source file — the user may want to keep it.
+func (s *StorageService) ImportVaultFromPath(path string) error {
+	if path == "" {
+		return errors.New("import path is empty")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve import path: %w", err)
+	}
+	// Refuse to import the file that IS the current vault — would just
+	// archive it next to itself for no benefit and risk a confusing state.
+	if currentAbs, err := filepath.Abs(s.vaultPath); err == nil && abs == currentAbs {
+		return errors.New("import source is already the active vault")
+	}
+	return s.replaceCurrentWithVaultFile(abs)
+}
+
+// replaceCurrentWithVaultFile is the shared core of AdoptLegacyVault and
+// ImportVaultFromPath. Reads `src`, parse-probes it as a Vault, archives
+// the existing current vault (if any) to vault.osm.replaced-<unix>, and
+// atomically installs the source bytes at the canonical path. Holds s.mu
+// for the whole operation and refuses if the vault is unlocked.
+func (s *StorageService) replaceCurrentWithVaultFile(src string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.isUnlocked {
+		return errors.New("vault must be locked before importing another vault")
+	}
+
+	srcBytes, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read source vault: %w", err)
+	}
+
+	// Verify the source parses as a vault before we touch the current one
+	// — refuse to clobber working state with junk.
+	var probe models.Vault
+	if err := json.Unmarshal(srcBytes, &probe); err != nil {
+		return fmt.Errorf("source file is not a valid vault: %w", err)
+	}
+
+	// Archive existing current vault if present.
+	if _, err := os.Stat(s.vaultPath); err == nil {
+		backup := fmt.Sprintf("%s.replaced-%d", s.vaultPath, time.Now().Unix())
+		if err := os.Rename(s.vaultPath, backup); err != nil {
+			return fmt.Errorf("backup existing vault: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat existing vault: %w", err)
+	}
+
+	// Atomically install the source bytes at the current path.
+	tmp := s.vaultPath + ".tmp"
+	if err := os.WriteFile(tmp, srcBytes, 0600); err != nil {
+		return fmt.Errorf("write imported vault: %w", err)
+	}
+	if err := os.Rename(tmp, s.vaultPath); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("install imported vault: %w", err)
+	}
+	return nil
 }
 
 // HasRecoveryPhrase checks if the vault has a recovery phrase set (without unlocking)

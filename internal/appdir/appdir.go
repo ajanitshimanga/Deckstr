@@ -142,3 +142,25 @@ func dirExists(path string) (bool, error) {
 	return false, fmt.Errorf("appdir: stat %s: %w", path, err)
 }
 
+// LegacyVaultPath returns the absolute path of a vault.osm sitting in the
+// pre-rebrand OpenSmurfManager directory, or "" if no such file is on disk.
+// Pure probe — does NOT trigger Path()'s migration side effects.
+//
+// Used by the storage layer to surface an "adopt my old vault" recovery
+// option when Path()'s "current wins" merge silently left a real vault
+// behind (the bug a small number of v1.5→1.6 upgraders hit).
+func LegacyVaultPath() (string, error) {
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("appdir: user config dir: %w", err)
+	}
+	candidate := filepath.Join(config, LegacyName, "vault.osm")
+	if _, err := os.Stat(candidate); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("appdir: stat %s: %w", candidate, err)
+	}
+	return candidate, nil
+}
+

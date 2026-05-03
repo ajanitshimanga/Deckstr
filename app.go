@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"OpenSmurfManager/internal/accounts"
+	"OpenSmurfManager/internal/appdir"
 	"OpenSmurfManager/internal/models"
 	"OpenSmurfManager/internal/process"
 	"OpenSmurfManager/internal/providers"
@@ -212,6 +213,95 @@ func (a *App) Lock() {
 // GetVaultPath returns the path to the vault file
 func (a *App) GetVaultPath() string {
 	return a.storage.GetVaultPath()
+}
+
+// DetectLegacyVault returns metadata about an orphaned vault.osm in the
+// pre-rebrand OpenSmurfManager directory, or nil. Surfaced on the auth
+// screens so users whose v1.5→1.6 migration left their real vault behind
+// can adopt it without manually moving files.
+func (a *App) DetectLegacyVault() (*storage.LegacyVaultInfo, error) {
+	info, err := a.storage.DetectLegacyVault()
+	telemetry.LogInfo("vault.legacy_detect", map[string]interface{}{
+		"found":   info != nil,
+		"success": err == nil,
+	})
+	return info, err
+}
+
+// AdoptLegacyVault replaces the current vault with the orphaned legacy one,
+// archiving the existing vault to vault.osm.replaced-<unix> first. The
+// vault must be locked when called. After success the caller should
+// re-run the initialize() flow so the unlock screen pre-fills the
+// adopted vault's username.
+//
+// Also carries client.id over (with the same archive-on-overwrite) and
+// removes the entire legacy folder, so the user's telemetry identity
+// stays continuous and the orphan probe stops reappearing.
+func (a *App) AdoptLegacyVault() error {
+	result, err := a.storage.AdoptLegacyVault()
+	telemetry.LogInfo("vault.legacy_adopt", map[string]interface{}{
+		"success": err == nil,
+	})
+	if err == nil {
+		// Unified semantic event for "vault identity changed in a
+		// non-recoverable way." Pairs with kind=import_file from
+		// ImportVaultFromPath. Useful for tracking how often the rebrand
+		// recovery actually fires + when we can sunset the legacy code.
+		telemetry.LogInfo("vault.transition", map[string]interface{}{
+			"kind":              "adopt_legacy",
+			"archived_current":  result.ArchivedCurrent,
+			"client_id_carried": result.ClientIDCarried,
+			"legacy_dir_removed": result.LegacyDirRemoved,
+		})
+	}
+	return err
+}
+
+// ImportVaultFromPath replaces the current vault with the bytes of the
+// caller-supplied vault file. Same atomic replace-with-backup semantics as
+// AdoptLegacyVault, but works with any source path — backup files, copies
+// from another machine, vault.osm pulled off a dead disk. Refuses while
+// unlocked.
+func (a *App) ImportVaultFromPath(path string) error {
+	err := a.storage.ImportVaultFromPath(path)
+	telemetry.LogInfo("vault.import", map[string]interface{}{
+		"success": err == nil,
+	})
+	if err == nil {
+		telemetry.LogInfo("vault.transition", map[string]interface{}{
+			"kind":             "import_file",
+			"archived_current": true, // import always archives if a current existed; ImportVaultFromPath checks
+			"client_id_carried": false,
+			"legacy_dir_removed": false,
+		})
+	}
+	return err
+}
+
+// OpenVaultFolder reveals the user-config directory containing vault.osm
+// in the platform's native file manager. Used by the recovery UI as an
+// escape hatch when the in-app banner fails for whatever reason — the
+// user can at least see their files and copy them somewhere safe.
+func (a *App) OpenVaultFolder() error {
+	dir, err := appdir.Path()
+	if err != nil {
+		return err
+	}
+	return openInFileManager(dir)
+}
+
+// PickVaultFile opens a native file picker filtered to .osm files and
+// returns the chosen absolute path, or "" if the user cancelled. Pure
+// dialog passthrough — does not touch the vault. Pair with
+// ImportVaultFromPath to actually swap.
+func (a *App) PickVaultFile() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select vault file to import",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Vault files (*.osm)", Pattern: "*.osm"},
+			{DisplayName: "All files (*.*)", Pattern: "*.*"},
+		},
+	})
 }
 
 // ============================================

@@ -14,6 +14,7 @@ const changePassword = vi.fn()
 const updatePasswordHint = vi.fn()
 const regenerateRecoveryPhrase = vi.fn()
 const clearError = vi.fn()
+const importVaultFromFile = vi.fn()
 
 type StoreOverrides = Partial<{
   username: string
@@ -56,6 +57,7 @@ vi.mock('../../stores/appStore', () => ({
     updatePasswordHint,
     regenerateRecoveryPhrase,
     clearError,
+    importVaultFromFile,
   }),
 }))
 
@@ -63,12 +65,14 @@ const isTelemetryEnabled = vi.fn()
 const setTelemetryEnabled = vi.fn()
 const openUsageLogsFolder = vi.fn()
 const openReleasePage = vi.fn()
+const openVaultFolder = vi.fn()
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   IsTelemetryEnabled: () => isTelemetryEnabled(),
   SetTelemetryEnabled: (v: boolean) => setTelemetryEnabled(v),
   OpenUsageLogsFolder: () => openUsageLogsFolder(),
   OpenReleasePage: (url: string) => openReleasePage(url),
+  OpenVaultFolder: () => openVaultFolder(),
 }))
 
 import { SettingsModal } from '../SettingsModal'
@@ -94,6 +98,8 @@ beforeEach(() => {
   setTelemetryEnabled.mockReset().mockResolvedValue(undefined)
   openUsageLogsFolder.mockReset().mockResolvedValue(undefined)
   openReleasePage.mockReset().mockResolvedValue(undefined)
+  openVaultFolder.mockReset().mockResolvedValue(undefined)
+  importVaultFromFile.mockReset()
   currentOverrides = {}
 })
 
@@ -468,5 +474,81 @@ describe('SettingsModal — last-synced label', () => {
   it('formats minutes-old syncs as "Nm ago"', () => {
     renderWith({ lastRankSyncTime: Date.now() - 7 * 60_000 })
     expect(screen.getByText(/last synced 7m ago/i)).toBeInTheDocument()
+  })
+})
+
+describe('SettingsModal — Import vault from file', () => {
+  it('shows the Import drill-row in the Security section', () => {
+    renderWith()
+    expect(screen.getByText(/import vault from file/i)).toBeInTheDocument()
+  })
+
+  it('drills into the import view, explains the flow, and exposes the file picker', async () => {
+    const user = userEvent.setup()
+    renderWith()
+
+    await user.click(screen.getByText(/import vault from file/i))
+
+    // Header swaps so the user knows where they are.
+    expect(screen.getByText(/^import vault$/i)).toBeInTheDocument()
+    // Warning copy enumerates the destructive consequences before any picker
+    // opens — the user must be able to bail.
+    expect(screen.getByText(/you'll be signed out/i)).toBeInTheDocument()
+    expect(screen.getByText(/your current vault is archived/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /pick vault file/i })).toBeInTheDocument()
+  })
+
+  it('calls importVaultFromFile and closes Settings on a successful import', async () => {
+    const user = userEvent.setup()
+    importVaultFromFile.mockResolvedValue({ ok: true, cancelled: false })
+    const { onClose } = renderWith()
+
+    await user.click(screen.getByText(/import vault from file/i))
+    await user.click(screen.getByRole('button', { name: /pick vault file/i }))
+
+    expect(importVaultFromFile).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('stays on the import view when the user cancels the picker', async () => {
+    const user = userEvent.setup()
+    importVaultFromFile.mockResolvedValue({ ok: false, cancelled: true })
+    const { onClose } = renderWith()
+
+    await user.click(screen.getByText(/import vault from file/i))
+    await user.click(screen.getByRole('button', { name: /pick vault file/i }))
+
+    await waitFor(() => expect(importVaultFromFile).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+    // The destructive copy is still visible — we haven't navigated away.
+    expect(screen.getByText(/you'll be signed out/i)).toBeInTheDocument()
+  })
+
+  it('renders a "Show my vault folder" escape hatch on the import view', async () => {
+    const user = userEvent.setup()
+    renderWith()
+
+    await user.click(screen.getByText(/import vault from file/i))
+    await user.click(screen.getByRole('button', { name: /show my vault folder/i }))
+
+    expect(openVaultFolder).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces the store error on the import view when import fails', async () => {
+    const user = userEvent.setup()
+    // The import view reads error from the store mock; pre-populate it so
+    // the error block renders on first paint after the user clicks.
+    importVaultFromFile.mockImplementation(async () => {
+      currentOverrides.error = 'source file is not a valid vault: unexpected end of JSON input'
+      return { ok: false, cancelled: false }
+    })
+    renderWith()
+
+    await user.click(screen.getByText(/import vault from file/i))
+    await user.click(screen.getByRole('button', { name: /pick vault file/i }))
+
+    await waitFor(() =>
+      expect(screen.getByText(/source file is not a valid vault/i)).toBeInTheDocument()
+    )
   })
 })

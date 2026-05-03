@@ -1,8 +1,148 @@
 import { useState, useEffect, useRef, ClipboardEvent, KeyboardEvent } from 'react'
 import { useAppStore } from '../stores/appStore'
-import { Lock, Eye, EyeOff, KeyRound, User, HelpCircle, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { Lock, Eye, EyeOff, KeyRound, User, HelpCircle, ArrowLeft, AlertTriangle, ArrowRightLeft, FolderOpen, CheckCircle2 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { RecoveryPhraseModal } from './RecoveryPhraseModal'
+import type { storage } from '../../wailsjs/go/models'
+import { OpenVaultFolder } from '../../wailsjs/go/main/App'
+
+// LegacyVaultBanner surfaces an orphaned vault.osm in the pre-rebrand
+// OpenSmurfManager directory so the user can adopt it without manually
+// shuffling files. Reused on the unlock screen, the create screen, and
+// inside the recovery flow's "no recovery phrase" branch.
+// AdoptedConfirmationBanner is the green follow-up that appears after a
+// successful AdoptLegacyVault. Stays put until the user actually signs in
+// (the store clears recentlyAdopted on first successful unlock). Without
+// this banner the only cue that adoption committed is the *absence* of
+// the blue legacy banner — too subtle.
+function AdoptedConfirmationBanner() {
+  return (
+    <div
+      data-testid="adopted-confirmation-banner"
+      className="mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30"
+    >
+      <div className="flex items-start gap-2.5">
+        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-[var(--color-foreground)]">
+            Migrated to Deckstr
+          </p>
+          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5">
+            OpenSmurfManager has been removed. Sign in below with the same username and password you used before.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LegacyVaultBanner({
+  info,
+  isCreating,
+  onAdopt,
+  isAdopting,
+  errorMessage,
+}: {
+  info: storage.LegacyVaultInfo
+  isCreating: boolean
+  onAdopt: () => void | Promise<unknown>
+  isAdopting: boolean
+  errorMessage?: string | null
+}) {
+  const username = info.username || '(no username)'
+  // Two-step UX: compact summary by default; clicking "Use this vault"
+  // expands an inline confirm panel that lists the consequences before
+  // the destructive action runs. Avoids surprise from a misclick on what
+  // looks like a benign primary action.
+  const [confirming, setConfirming] = useState(false)
+  const subtitle = isCreating
+    ? 'Use it instead of starting over'
+    : 'Sign in with your old credentials'
+  return (
+    <div
+      data-testid="legacy-vault-banner"
+      className="mb-4 p-3 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30"
+    >
+      <div className="flex items-center gap-2.5">
+        <ArrowRightLeft className="w-4 h-4 text-[var(--color-primary)] flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-[var(--color-foreground)] truncate">
+            Existing vault: <span className="text-[var(--color-primary)]">{username}</span>
+          </p>
+          <p className="text-xs text-[var(--color-muted-foreground)] mt-0.5 truncate">
+            From OpenSmurfManager · {subtitle}
+          </p>
+        </div>
+        {!confirming && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="flex-shrink-0 px-2.5 py-1.5 rounded-md text-xs font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white cursor-pointer transition-colors"
+          >
+            Use this vault
+          </button>
+        )}
+      </div>
+
+      {confirming && (
+        <div className="mt-3 pt-3 border-t border-[var(--color-primary)]/20 space-y-2">
+          <p className="text-xs font-medium text-[var(--color-foreground)]">
+            When you switch:
+          </p>
+          <ul className="text-xs text-[var(--color-muted-foreground)] space-y-1 list-disc pl-4">
+            <li>Sign in with the username and password from OpenSmurfManager.</li>
+            <li>
+              Your current vault is archived as{' '}
+              <code className="px-1 py-0.5 rounded bg-[var(--color-card)] text-[10px]">vault.osm.replaced-&lt;timestamp&gt;</code>
+              {' '}— not deleted.
+            </li>
+            <li>The OpenSmurfManager folder is removed.</li>
+          </ul>
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => { void onAdopt() }}
+              disabled={isAdopting}
+              className={cn(
+                'flex-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors',
+                isAdopting
+                  ? 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)] cursor-not-allowed'
+                  : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/90 text-white cursor-pointer'
+              )}
+            >
+              {isAdopting ? 'Switching…' : 'Confirm switch'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={isAdopting}
+              className="flex-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-transparent border border-[var(--color-border)] text-[var(--color-foreground)] hover:bg-[var(--color-card)] cursor-pointer transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="mt-2.5 p-2 rounded-md bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/20">
+          <p className="text-xs text-[var(--color-destructive)]">{errorMessage}</p>
+          {/* Escape hatch: when in-app adoption fails (permissions, file
+              lock, etc.) the user shouldn't be stuck — let them open
+              the vault folder so they can copy the legacy file by hand. */}
+          <button
+            type="button"
+            onClick={() => { void OpenVaultFolder() }}
+            className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-foreground)] hover:underline"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            Show me my vault folder
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function UnlockScreen() {
   const {
@@ -10,6 +150,10 @@ export function UnlockScreen() {
     storedUsername,
     passwordHint,
     hasRecoveryPhrase,
+    legacyVault,
+    isAdoptingLegacy,
+    recentlyAdopted,
+    adoptLegacyVault,
     createVault,
     unlock,
     resetPasswordWithRecoveryPhrase,
@@ -154,6 +298,88 @@ export function UnlockScreen() {
 
   // Recovery Mode UI
   if (isRecoveryMode) {
+    // No recovery phrase on the current vault → the 6-word reset can't
+    // succeed against this file. Branch the screen to either guide the
+    // user to their orphaned legacy vault, or explain that no recovery is
+    // available. This is the "make it not require figuring out failed
+    // attempts" path the user asked for.
+    if (!hasRecoveryPhrase) {
+      return (
+        <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[var(--color-background)] overflow-y-auto">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <div className="mx-auto w-16 h-16 bg-[var(--color-warning)] rounded-2xl flex items-center justify-center mb-4">
+                <KeyRound className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
+                Forgot your password?
+              </h1>
+            </div>
+
+            {legacyVault ? (
+              <div className="space-y-4">
+                <p className="text-sm text-[var(--color-muted-foreground)]">
+                  This vault doesn't have a recovery PIN saved, but we found
+                  your previous OpenSmurfManager vault on this PC. Switch to
+                  it to sign in with the username and password you used
+                  before — your accounts and data come back with it.
+                </p>
+                <LegacyVaultBanner
+                  info={legacyVault}
+                  isCreating={false}
+                  onAdopt={async () => {
+                    const ok = await adoptLegacyVault()
+                    if (ok) setIsRecoveryMode(false)
+                  }}
+                  isAdopting={isAdoptingLegacy}
+                  errorMessage={error}
+                />
+                <button
+                  type="button"
+                  onClick={exitRecoveryMode}
+                  className="w-full py-2 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Sign In
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)]">
+                  <p className="text-sm text-[var(--color-foreground)]">
+                    No recovery PIN was saved for this vault.
+                  </p>
+                  <p className="text-xs text-[var(--color-muted-foreground)] mt-2">
+                    Recovery requires the 6-word PIN that was generated when
+                    the vault was created. If you have a backup vault file
+                    on this PC, you can import it from{' '}
+                    <span className="font-medium text-[var(--color-foreground)]">Settings → Security → Import vault from file</span>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { void OpenVaultFolder() }}
+                    className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    Show me my vault folder
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={exitRecoveryMode}
+                  className="w-full py-2 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Sign In
+                </button>
+              </div>
+            )}
+          </div>
+          <RecoveryPhraseModal />
+        </div>
+      )
+    }
+
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[var(--color-background)] overflow-y-auto">
         <div className="w-full max-w-md">
@@ -330,10 +556,10 @@ export function UnlockScreen() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-[var(--color-background)]">
-      <div className="w-full max-w-md">
+    <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-[var(--color-background)] overflow-y-auto">
+      <div className="w-full max-w-md py-4">
         {/* Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="mx-auto w-16 h-16 bg-[var(--color-primary)] rounded-2xl flex items-center justify-center mb-4">
             <KeyRound className="w-8 h-8 text-white" />
           </div>
@@ -349,6 +575,29 @@ export function UnlockScreen() {
               : 'Sign in to access your accounts'}
           </p>
         </div>
+
+        {/* Legacy vault banner — surfaces an orphaned OpenSmurfManager vault
+            so the user can adopt it instead of creating/signing into the
+            wrong one. Shown above the form on both create and unlock
+            states. */}
+        {/* Post-adoption confirmation. Shown until the user signs in
+            successfully so they get explicit feedback that the migration
+            committed and OpenSmurfManager is gone — without this the only
+            cue is the (correct) absence of the legacy banner, which is
+            easy to miss. */}
+        {recentlyAdopted && !legacyVault && (
+          <AdoptedConfirmationBanner />
+        )}
+
+        {legacyVault && (
+          <LegacyVaultBanner
+            info={legacyVault}
+            isCreating={isCreating}
+            onAdopt={adoptLegacyVault}
+            isAdopting={isAdoptingLegacy}
+            errorMessage={error}
+          />
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -492,8 +741,9 @@ export function UnlockScreen() {
                 </>
               )}
 
-              {/* Show recovery suggestion after 3 failed attempts */}
-              {failedAttempts >= 3 && hasRecoveryPhrase && (
+              {/* Escalated suggestion after 3 failed attempts. The lightweight
+                  link below is always visible — this card just nudges harder. */}
+              {failedAttempts >= 3 && (
                 <div className="p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="w-5 h-5 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
@@ -502,7 +752,11 @@ export function UnlockScreen() {
                         Multiple failed attempts
                       </p>
                       <p className="text-xs text-[var(--color-muted-foreground)] mt-1">
-                        Forgot your password? You can use your recovery PIN to reset it.
+                        {hasRecoveryPhrase
+                          ? 'Forgot your password? Use your recovery PIN to reset it.'
+                          : legacyVault
+                            ? 'Looks like the wrong vault. You can switch to your OpenSmurfManager vault above.'
+                            : 'Forgot your password? Recovery requires the 6-word PIN you saved when creating this vault.'}
                       </p>
                       <button
                         type="button"
@@ -516,14 +770,18 @@ export function UnlockScreen() {
                 </div>
               )}
 
-              {hasRecoveryPhrase && failedAttempts < 3 && (
+              {/* Always-visible lightweight link. Recovery mode itself
+                  branches on whether the vault has a phrase + whether a
+                  legacy vault is detected, so it stays useful even when
+                  hasRecoveryPhrase is false. */}
+              {failedAttempts < 3 && (
                 <button
                   type="button"
                   onClick={() => setIsRecoveryMode(true)}
                   className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                 >
                   <KeyRound className="w-4 h-4" />
-                  Forgot password? Use recovery PIN
+                  Forgot your password?
                 </button>
               )}
             </div>

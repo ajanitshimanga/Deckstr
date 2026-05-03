@@ -67,8 +67,12 @@ import {
   DownloadAndInstallUpdate,
   OpenReleasePage,
   ConsumePendingRecoveryRotation,
+  DetectLegacyVault,
+  AdoptLegacyVault,
+  ImportVaultFromPath,
+  PickVaultFile,
 } from '../../wailsjs/go/main/App'
-import { providers, updater } from '../../wailsjs/go/models'
+import { providers, storage, updater } from '../../wailsjs/go/models'
 
 interface AppStore {
   // App state
@@ -80,6 +84,19 @@ interface AppStore {
   storedUsername: string // Pre-filled from vault for login
   passwordHint: string // Password hint displayed on lock screen
   hasRecoveryPhrase: boolean // Whether vault has recovery phrase set
+
+  // Legacy vault recovery — orphaned OpenSmurfManager vault.osm that the
+  // rebrand migration left behind (e.g. when both legacy and current dirs
+  // already had a vault file). Surfaced on the auth screens so users can
+  // adopt it instead of being stuck with an unknown current vault.
+  legacyVault: storage.LegacyVaultInfo | null
+  isAdoptingLegacy: boolean
+  // recentlyAdopted is set to true the moment AdoptLegacyVault returns
+  // successfully and cleared on the next successful unlock (or lock). It
+  // drives a green "✓ Migrated to Deckstr" confirmation on the unlock
+  // screen so the user gets feedback that the swap worked AND that the
+  // OpenSmurfManager folder is now gone.
+  recentlyAdopted: boolean
 
   // Recovery phrase state (shown after creation/change)
   pendingRecoveryPhrase: string | null
@@ -133,6 +150,8 @@ interface AppStore {
   createVault: (username: string, password: string, hint?: string) => Promise<boolean>
   unlock: (username: string, password: string) => Promise<boolean>
   lock: () => void
+  adoptLegacyVault: () => Promise<boolean>
+  importVaultFromFile: () => Promise<{ ok: boolean; cancelled: boolean }>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
   updatePasswordHint: (hint: string) => Promise<boolean>
   generateRecoveryPhrase: () => Promise<string | null>
@@ -188,6 +207,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   storedUsername: '',
   passwordHint: '',
   hasRecoveryPhrase: false,
+  legacyVault: null,
+  isAdoptingLegacy: false,
+  recentlyAdopted: false,
   pendingRecoveryPhrase: null,
   showRecoveryPhraseModal: false,
   requiresPinSetup: false,
@@ -223,6 +245,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const exists = await VaultExists()
       const unlocked = await IsUnlocked()
 
+      // Probe for an orphaned OpenSmurfManager vault on every initialize.
+      // Cheap (single stat + small JSON parse) and runs even when the
+      // current vault is unlocked, so adopting later is one-click.
+      let legacyVault: storage.LegacyVaultInfo | null = null
+      try {
+        legacyVault = await DetectLegacyVault()
+      } catch (e) {
+        console.warn('Legacy vault detection failed:', e)
+      }
+
       if (unlocked) {
         // Load data
         const [accounts, networks, tags, settings, username] = await Promise.all([
@@ -239,6 +271,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           gameNetworks: networks || [],
           tags: tags || [],
           settings,
+          legacyVault,
         })
         // Resize to main window size
         SetWindowSizeMain()
@@ -252,15 +285,77 @@ export const useAppStore = create<AppStore>((set, get) => ({
             GetPasswordHint(),
             HasRecoveryPhrase(),
           ])
-          set({ appState: 'locked', storedUsername, passwordHint: passwordHint || '', hasRecoveryPhrase: hasRecovery })
+          set({ appState: 'locked', storedUsername, passwordHint: passwordHint || '', hasRecoveryPhrase: hasRecovery, legacyVault })
         } catch {
-          set({ appState: 'locked' })
+          set({ appState: 'locked', legacyVault })
         }
       } else {
-        set({ appState: 'create' })
+        set({ appState: 'create', legacyVault })
       }
     } catch (e) {
       set({ error: String(e) })
+    }
+  },
+
+  // Import a vault from any user-chosen file. Locks the vault first (required
+  // by the backend), opens a native file picker, and routes the chosen path
+  // through ImportVaultFromPath. On success the app re-runs initialize() so
+  // the unlock screen pre-fills the imported username.
+  //
+  // Returns { ok, cancelled } so callers can distinguish "user cancelled
+  // the picker" from "import actually failed".
+  importVaultFromFile: async () => {
+    set({ error: null })
+    let path: string
+    try {
+      path = await PickVaultFile()
+    } catch (e) {
+      set({ error: String(e) })
+      return { ok: false, cancelled: false }
+    }
+    if (!path) return { ok: false, cancelled: true }
+
+    try {
+      Lock()
+    } catch {
+      // Best effort — if we couldn't lock cleanly the backend will still
+      // refuse the import, surfacing a real error to the user.
+    }
+    try {
+      await ImportVaultFromPath(path)
+      await get().initialize()
+      return { ok: true, cancelled: false }
+    } catch (e) {
+      set({ error: String(e) })
+      // Re-init anyway so the UI reflects whatever state we ended up in
+      // (e.g. locked-out from the just-archived vault).
+      await get().initialize()
+      return { ok: false, cancelled: false }
+    }
+  },
+
+  // Adopt the legacy vault: archives the current vault.osm (if any) and
+  // installs the legacy bytes at the canonical path, then re-runs initialize
+  // so the unlock screen pre-fills the adopted username. Refused by the
+  // backend if the vault is currently unlocked.
+  adoptLegacyVault: async () => {
+    set({ isAdoptingLegacy: true, error: null })
+    try {
+      // Lock first so the backend's "must be locked" precondition holds even
+      // if the user is currently signed into a stub vault.
+      try {
+        Lock()
+      } catch {
+        // Lock() is best-effort; the backend will refuse adoption if
+        // anything left the in-memory state unlocked.
+      }
+      await AdoptLegacyVault()
+      set({ isAdoptingLegacy: false, legacyVault: null, recentlyAdopted: true })
+      await get().initialize()
+      return true
+    } catch (e) {
+      set({ isAdoptingLegacy: false, error: String(e) })
+      return false
     }
   },
 
@@ -318,6 +413,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         tags: tags || [],
         settings,
         error: null,
+        // Successful sign-in retires the post-adoption notice — its job is
+        // done once the user has actually used the migrated credentials.
+        recentlyAdopted: false,
       })
       // Resize to main window size
       SetWindowSizeMain()
